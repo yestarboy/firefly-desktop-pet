@@ -6,7 +6,16 @@
 ![status](https://img.shields.io/badge/platform-Windows%2010%2F11-blue)
 ![python](https://img.shields.io/badge/python-3.10%2B-blue)
 
----
+<img width="432" height="315" alt="屏幕截图 2026-10-23 171541" src="https://github.com/user-attachments/assets/5508250c-a4f1-4cf0-b0d9-ec53dc19b122" />
+<img width="939" height="802" alt="屏幕截图 2026-10-23 162200" src="https://github.com/user-attachments/assets/e18e931e-61da-4120-adfb-7e617a51daf6" /><img width="930" height="806" alt="屏幕截图 2026-10-23 162220" src="https://github.com/user-attachments/assets/9f7aeb1a-f52f-446b-a4f0-27c477a77479" />
+<img width="706" height="523" alt="屏幕截图 2026-10-23 162231" src="https://github.com/user-attachments/assets/5699f0a5-8f06-4aa7-bd7d-5883ef569109" />
+<img width="704" height="286" alt="屏幕截图 2026-10-23 162237" src="https://github.com/user-attachments/assets/c6a71dea-7e9f-41ba-8c60-db44afa0a058" />
+<img width="702" height="275" alt="屏幕截图 2026-10-23 162241" src="https://github.com/user-attachments/assets/201947e1-bb2f-4ec4-902f-0ad0fd2a2faa" />
+<img width="699" height="232" alt="屏幕截图 2026-10-23 162249" src="https://github.com/user-attachments/assets/ca5bab8b-af66-4726-8860-2eeb4d410d65" />
+<img width="913" height="604" alt="屏幕截图 2026-10-23 162256" src="https://github.com/user-attachments/assets/1ba49fe7-4352-4b03-a9e0-21abcc165c8b" />
+<img width="200" height="117" alt="屏幕截图 2026-10-23 162305" src="https://github.com/user-attachments/assets/4e897018-3d0b-403d-86bc-27f335a9b8a5" />
+
+
 
 ## 特性
 

@@ -6,6 +6,7 @@
 ![status](https://img.shields.io/badge/platform-Windows%2010%2F11-blue)
 ![python](https://img.shields.io/badge/python-3.10%2B-blue)
 
+<img width="432" height="315" alt="屏幕截图 2026-10-23 171541" src="https://github.com/user-attachments/assets/5508250c-a4f1-4cf0-b0d9-ec53dc19b122" />
 
 
 
@@ -119,8 +120,7 @@ GPT-SoVITS 自带的 runtime（它通常已经装好）。启动器默认就用�
 
 ---
 
-##实机配图
-<img width="432" height="315" alt="屏幕截图 2026-10-23 171541" src="https://github.com/user-attachments/assets/5508250c-a4f1-4cf0-b0d9-ec53dc19b122" />
+## 实机配图
 <img width="939" height="802" alt="屏幕截图 2026-10-23 162200" src="https://github.com/user-attachments/assets/e18e931e-61da-4120-adfb-7e617a51daf6" /><img width="930" height="806" alt="屏幕截图 2026-10-23 162220" src="https://github.com/user-attachments/assets/9f7aeb1a-f52f-446b-a4f0-27c477a77479" />
 <img width="706" height="523" alt="屏幕截图 2026-10-23 162231" src="https://github.com/user-attachments/assets/5699f0a5-8f06-4aa7-bd7d-5883ef569109" />
 <img width="704" height="286" alt="屏幕截图 2026-10-23 162237" src="https://github.com/user-attachments/assets/c6a71dea-7e9f-41ba-8c60-db44afa0a058" />

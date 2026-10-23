@@ -1,0 +1,59 @@
+/* ============================================================
+   layout.css —— 顶栏、导航栏、tab 页面容器
+   ============================================================ */
+
+.top{
+  display:flex;
+  align-items:center;
+  gap:14px;
+  margin-bottom:14px;
+}
+
+.status{
+  font-size:12px;
+  padding:3px 10px;
+  border-radius:20px;
+  background:#2a2d38;
+  color:var(--dim);
+}
+
+.status.ok{ background:rgba(62,207,142,.15); color:var(--ok); }
+
+.status.err{ background:rgba(255,107,107,.15); color:var(--err); }
+
+/* ---- 置顶导航栏 ---- */
+.tabs{
+  position:sticky;
+  top:0;
+  z-index:10;
+  display:flex;
+  gap:6px;
+  padding:8px 0 0;
+  background:var(--bg);
+  border-bottom:1px solid var(--line);
+  margin-bottom:18px;
+}
+
+.tab{
+  padding:9px 22px;
+  border:1px solid transparent;
+  border-bottom:none;
+  border-radius:10px 10px 0 0;
+  background:transparent;
+  color:var(--dim);
+  font-size:14px;
+  cursor:pointer;
+}
+
+.tab:hover{ color:var(--text); }
+
+.tab.active{
+  color:var(--accent);
+  background:var(--panel);
+  border-color:var(--line);
+}
+
+/* ---- tab 页 ---- */
+.tab-page{ display:block; }
+
+.tab-page[hidden]{ display:none !important; }

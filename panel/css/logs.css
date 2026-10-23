@@ -1,0 +1,31 @@
+/* ============================================================
+   logs.css —— 日志页
+   ============================================================ */
+
+.chip{
+  display:inline-flex;
+  align-items:center;
+  padding:4px 12px;
+  border-radius:20px;
+  font-size:12px;
+  background:#2a2d38;
+  color:var(--dim);
+}
+
+.chip.ok{ background:rgba(62,207,142,.15); color:var(--ok); }
+.chip.err{ background:rgba(255,107,107,.15); color:var(--err); }
+
+.log-view{
+  margin:10px 0 0;
+  padding:12px 14px;
+  border-radius:8px;
+  background:#0e0f13;
+  border:1px solid var(--line);
+  font:12px/1.55 Consolas, "Cascadia Mono", "Microsoft YaHei", monospace;
+  color:#c9d1e0;
+  height:calc(100vh - 340px);
+  min-height:220px;
+  overflow:auto;
+  white-space:pre-wrap;
+  word-break:break-all;
+}

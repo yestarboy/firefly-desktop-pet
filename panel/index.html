@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>Firefly 控制台</title>
+<link rel="stylesheet" href="css/base.css" />
+<link rel="stylesheet" href="css/layout.css" />
+<link rel="stylesheet" href="css/settings.css" />
+<link rel="stylesheet" href="css/chat.css" />
+<link rel="stylesheet" href="css/logs.css" />
+</head>
+<body>
+
+<div class="top">
+  <h1>Firefly 控制台</h1>
+  <span id="status" class="status">读取中…</span>
+</div>
+
+<nav class="tabs">
+  <button class="tab active" data-tab="chat">对话</button>
+  <button class="tab" data-tab="setting">设置</button>
+  <button class="tab" data-tab="log">日志</button>
+</nav>
+
+<main>
+
+  <!-- ==================== 对话 ==================== -->
+  <section class="tab-page" id="page-chat">
+    <div id="chatList" class="chat-list"></div>
+    <div class="chat-input">
+      <input id="chatInput" placeholder="和萤宝说点什么…" />
+      <button id="chatSend">发送</button>
+    </div>
+  </section>
+
+  <!-- ==================== 设置 ==================== -->
+  <section class="tab-page" id="page-setting" hidden>
+  <div class="settings-layout">
+    <nav class="side-nav" id="sideNav"></nav>
+    <div class="settings-main">
+
+    <div class="card" id="card-llm" data-nav="对话模型">
+      <h2>对话模型</h2>
+      <div class="grid">
+        <label>服务商
+          <select id="provider">
+            <option value="deepseek">DeepSeek（线上）</option>
+            <option value="ollama">本地 Ollama</option>
+          </select>
+        </label>
+        <label>模型
+          <input id="model" placeholder="deepseek-chat" />
+        </label>
+        <label class="wide">接口地址
+          <input id="base_url" placeholder="https://api.deepseek.com" />
+        </label>
+        <label class="wide">API Key
+          <span class="inline">
+            <input id="api_key" type="password" placeholder="sk-..." />
+            <button class="ghost" id="toggleKey" type="button">显示</button>
+          </span>
+        </label>
+        <label>温度（越高越发散）
+          <input id="temperature" type="number" step="0.1" min="0" max="2" />
+        </label>
+        <label>最大回复长度
+          <input id="max_tokens" type="number" step="64" min="64" max="4096" />
+        </label>
+      </div>
+      <label class="wide" style="margin-top:12px">人设提示词
+        <textarea id="system_prompt" rows="5"></textarea>
+      </label>
+      <div class="row">
+        <button id="testLLM" class="ghost">测试对话</button>
+        <span id="llmMsg" class="note"></span>
+      </div>
+    </div>
+
+    <div class="card" id="card-tts" data-nav="语音合成">
+      <h2>语音合成</h2>
+      <div class="grid">
+        <label class="wide">参考音色
+          <select id="tts_ref_wav"></select>
+        </label>
+        <label>语速
+          <input id="tts_speed" type="number" step="0.05" min="0.5" max="2" />
+        </label>
+      </div>
+      <p class="hint">
+        参考音色的文件名就是它的台词，音频与文本必须严格对应；
+        换音色时把新的 wav 放进 <code>D:\AI\data\voices\</code>，文件名等于台词即可。
+      </p>
+      <div class="row">
+        <button id="testTTS" class="ghost">测试发音</button>
+        <span id="ttsMsg" class="note"></span>
+      </div>
+    </div>
+
+    <div class="card" id="card-stt" data-nav="语音输入">
+      <h2>语音输入</h2>
+      <div class="grid">
+        <label>采集方式
+          <select id="voice_mode">
+            <option value="always">全程麦（点 🎤 录一句）</option>
+            <option value="hotkey">热键麦（按住说话）</option>
+          </select>
+        </label>
+        <label>热键
+          <span class="inline">
+            <input id="voice_hotkey" readonly placeholder="F9" />
+            <button class="ghost" id="hotkeyBtn" type="button">按下要用的键</button>
+          </span>
+        </label>
+        <label class="wide">麦克风
+          <span class="inline">
+            <select id="stt_mic"></select>
+            <button class="ghost" id="refreshMic" type="button">刷新</button>
+          </span>
+        </label>
+      </div>
+      <p class="hint">
+        说话前点桌宠右侧的 🎤；识别由独立的「Firefly STT」窗口提供（端口 9881）。
+        第一次打开需要几秒加载模型。
+      </p>
+      <div class="row">
+        <button id="testMic" class="ghost">试录一句</button>
+        <span id="micMsg" class="note"></span>
+      </div>
+    </div>
+
+    <div class="card" id="card-status" data-nav="运行状态">
+      <h2>运行状态</h2>
+      <pre id="stateBox">—</pre>
+    </div>
+
+    <div class="row">
+      <button id="save">保存配置</button>
+      <button id="reload" class="ghost">重新载入</button>
+      <span id="saveMsg" class="note"></span>
+    </div>
+
+    </div><!-- /settings-main -->
+  </div><!-- /settings-layout -->
+  </section>
+
+  <!-- ==================== 日志 ==================== -->
+  <section class="tab-page" id="page-log" hidden>
+
+    <div class="card">
+      <h2>服务状态</h2>
+      <div class="row" style="margin-top:0">
+        <span id="svcTts" class="chip">TTS …</span>
+        <span id="svcStt" class="chip">STT …</span>
+      </div>
+      <p class="hint" id="logPids">暂无 PID 记录</p>
+    </div>
+
+    <div class="card">
+      <h2>运行日志</h2>
+      <div class="row" style="margin-top:0">
+        <select id="logName" style="max-width:210px">
+          <option value="stt">STT 语音识别</option>
+          <option value="tts">TTS 语音合成</option>
+          <option value="pet">桌宠</option>
+        </select>
+        <select id="logLines" style="max-width:150px">
+          <option value="100">最近 100 行</option>
+          <option value="300" selected>最近 300 行</option>
+          <option value="1000">最近 1000 行</option>
+        </select>
+        <label style="flex-direction:row;align-items:center;gap:6px;margin:0">
+          <input type="checkbox" id="logAuto" checked style="width:auto" />
+          自动刷新
+        </label>
+        <button id="logRefresh" class="ghost" type="button">刷新</button>
+      </div>
+      <pre id="logView" class="log-view">（加载中…）</pre>
+    </div>
+
+  </section>
+
+</main>
+
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+<script src="js/util.js"></script>
+<script src="js/tabs.js"></script>
+<script src="js/sidenav.js"></script>
+<script src="js/settings.js"></script>
+<script src="js/chat.js"></script>
+<script src="js/logs.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>

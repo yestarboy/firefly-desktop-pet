@@ -1,0 +1,38 @@
+{
+  "_readme": "复制本文件为 firefly_config.json 后修改。firefly_config.json 已被 .gitignore 排除，不会上传。",
+
+  "provider": "deepseek",
+  "api_key": "sk-在这里填你的 DeepSeek key",
+  "base_url": "https://api.deepseek.com",
+  "model": "deepseek-chat",
+  "temperature": 0.9,
+  "max_tokens": 512,
+  "timeout": 60,
+
+  "_comment_prompt": "动作名必须同时存在于 assets/models 的模型文件、actions.py 的 MOTION_VOCAB 和这里的列表中",
+  "system_prompt": "回复时先在开头用（动作名）表示一个动作，动作名只能从这四个里选：思考、墨镜、裂开、猫耳。然后再说台词。你叫流萤，是桌面宠物助手，说话简短自然、可爱一点。除此之外不要输出任何括号内容。",
+
+  "_comment_tts": "tts_ref_wav 填 data/voices 里的文件名；留空则用第一个。tts_seed 固定后同一句话结果稳定，-1 为每次随机",
+  "tts_ref_wav": "",
+  "tts_speed": 1.0,
+  "tts_seed": 1234,
+
+  "_comment_memory": "memory_enabled=回复前注入记忆；memory_extract=回复后自动提炼（每轮多一次模型调用）",
+  "memory_enabled": true,
+  "memory_extract": true,
+
+  "_comment_voice": "voice_mode: always=点麦克风录一句 / hotkey=按住热键说话。voice_hotkey 可用 F1-F12、LeftCtrl/RightCtrl 等",
+  "voice_mode": "always",
+  "voice_hotkey": "F9",
+  "stt_mic": "",
+  "stt_hotwords": "流萤 星穹铁道",
+  "stt_fixes": {
+    "刘莹": "流萤",
+    "刘颖": "流萤",
+    "流莹": "流萤"
+  },
+
+  "_comment_ollama": "不想用线上时，把 provider 改成 ollama，下面的地址/model 就是本地兜底",
+  "ollama_url": "http://127.0.0.1:11434/api/chat",
+  "ollama_model": "gemma3:4b"
+}

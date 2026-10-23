@@ -1,0 +1,689 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>Live2D Pet</title>
+  <style>
+    html, body { margin:0; width:100%; height:100%; overflow:hidden; background:transparent; }
+    #stage{ position: fixed; inset: 0; overflow:hidden; background:transparent; }
+    #canvas{ width:100%; height:100%; display:block; cursor:grab; background:transparent; }
+
+    #inputBar{
+      position: fixed;
+      left: 12px; right: 12px;
+      bottom: 12px;
+      display:flex; gap:8px; align-items:center;
+      padding: 10px;
+      border-radius: 14px;
+      background: rgba(20,20,24,.55);
+      border: 1px solid rgba(255,255,255,.18);
+      backdrop-filter: blur(8px);
+    }
+    #inp{
+      flex:1; height: 34px; border-radius: 10px;
+      border: 1px solid rgba(255,255,255,.2);
+      background: rgba(0,0,0,.35);
+      color: #fff; padding: 0 10px;
+      outline: none;
+      font-size: 13px;
+    }
+    #btn{
+      height: 34px; padding: 0 12px;
+      border-radius: 10px; border: 1px solid rgba(255,255,255,.2);
+      background: rgba(70,120,255,.85); color:#fff;
+      font-size: 13px;
+    }
+
+    /* ================= 对话气泡：半透明黑底 + 白边 + 小尾巴 ================= */
+    #bubble{
+      position: fixed;
+      left: 50%;
+      top: 10px;
+      transform: translateX(-50%);
+      max-width: 86%;
+      padding: 10px 14px;
+      border-radius: 16px;
+      background: rgba(10, 11, 15, .62);
+      border: 2px solid rgba(255, 255, 255, .9);
+      color: #f3f5f9;
+      font-size: 13px;
+      line-height: 1.55;
+      white-space: pre-wrap;
+      word-break: break-word;
+      box-shadow: 0 10px 26px rgba(0,0,0,.35);
+      backdrop-filter: blur(6px);
+      pointer-events: none;
+      max-height: 40vh;
+      overflow-y: auto;
+      /* 隐藏滚动条，但仍可滚动（JS 会自动滚到底） */
+      scrollbar-width: none;
+      -ms-overflow-style: none;
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity .18s ease;
+    }
+    #bubble::-webkit-scrollbar{ width: 0; height: 0; display: none; }
+
+    #bubble.show{
+      opacity: 1;
+      visibility: visible;
+      animation: bubbleFloat 3.2s ease-in-out infinite alternate;
+    }
+    /* 用 margin-top 做浮动，不能用 transform——transform 已被 translateX 占用 */
+    @keyframes bubbleFloat{
+      from { margin-top: 0; }
+      to   { margin-top: -7px; }
+    }
+    /* 小尾巴：旋转 45° 的方块，只留右下两条边当描边 */
+    #bubble::after{
+      content: "";
+      position: absolute;
+      left: 50%;
+      bottom: -8px;
+      width: 12px;
+      height: 12px;
+      margin-left: -6px;
+      background: inherit;
+      border-right: 2px solid rgba(255, 255, 255, .9);
+      border-bottom: 2px solid rgba(255, 255, 255, .9);
+      transform: rotate(45deg);
+    }
+    #bubble.small{ font-size: 12px; }
+
+    #hint{
+      position: fixed;
+      left: 12px;
+      bottom: 62px;
+      color: rgba(255,255,255,.5);
+      font-size: 11px;
+      user-select: none;
+      pointer-events: none;
+      text-shadow: 0 1px 2px rgba(0,0,0,.45);
+    }
+
+    /* ================= 右侧悬浮球 ================= */
+    .fab-stack{
+      position: fixed;
+      right: 10px;
+      top: 42%;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      z-index: 20;
+      /* 默认隐藏，鼠标靠近才淡入 */
+      opacity: 0;
+      transform: translateX(14px);
+      pointer-events: none;
+      transition: opacity .18s ease, transform .18s ease;
+    }
+    .fab-stack.visible{
+      opacity: 1;
+      transform: none;
+      pointer-events: auto;
+    }
+    .fab{
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      border: 1px solid rgba(255,255,255,.25);
+      background: rgba(24,26,32,.72);
+      color: #fff;
+      font-size: 18px;
+      line-height: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      backdrop-filter: blur(6px);
+      box-shadow: 0 6px 16px rgba(0,0,0,.30);
+      transition: transform .12s ease, background .15s ease;
+    }
+    .fab:hover{ transform: scale(1.08); }
+    .fab.active{
+      background: rgba(91,140,255,.92);
+      border-color: rgba(255,255,255,.55);
+    }
+    /* 正在录音：变红 + 呼吸光圈 */
+    .fab.listening{
+      background: rgba(255,76,76,.95);
+      border-color: rgba(255,255,255,.6);
+      animation: fabPulse 1.2s ease-in-out infinite;
+    }
+    @keyframes fabPulse{
+      0%,100%{ box-shadow: 0 0 0 0 rgba(255,76,76,.55); }
+      50%    { box-shadow: 0 0 0 10px rgba(255,76,76,0); }
+    }
+
+    /* 语音模式：隐藏输入框，显示提示 */
+    body.voice-on #inputBar{ display: none !important; }
+
+    #voiceTip{
+      position: fixed;
+      left: 50%;
+      bottom: 14px;
+      transform: translateX(-50%);
+      padding: 6px 14px;
+      border-radius: 20px;
+      background: rgba(91,140,255,.9);
+      color: #fff;
+      font-size: 12px;
+      display: none;
+      pointer-events: none;
+    }
+    body.voice-on #voiceTip{ display: block; }
+  </style>
+</head>
+<body>
+  <div id="stage">
+    <canvas id="canvas"></canvas>
+  </div>
+
+  <div id="bubble"></div>
+  <div id="hint">F2 开关输入框 · 💬 聊天 · 🎤 语音</div>
+
+  <div class="fab-stack">
+    <button class="fab" id="fabChat" title="文字聊天">💬</button>
+    <button class="fab" id="fabVoice" title="语音聊天">🎤</button>
+  </div>
+
+  <div id="voiceTip">🎤 语音模式（输入框已隐藏）</div>
+
+  <div id="inputBar">
+    <input id="inp" placeholder="输入一句话…" />
+    <button id="btn">发送</button>
+  </div>
+
+  <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+  <script src="assets/live2d-libs/pixi.min.js"></script>
+  <script src="assets/live2d-libs/pixi-live2d-display.min.js"></script>
+  <script src="assets/live2d-libs/live2dcubismcore.min.js"></script>
+  <script src="assets/live2d-libs/cubism4.min.js"></script>
+
+  <script>
+    (async function () {
+      let pyBridge = null;
+      const VOICE = { mode: "always", hotkey: "F9" };
+      try{
+        new QWebChannel(qt.webChannelTransport, ch => {
+          pyBridge = ch.objects.pyBridge || ch.objects.bridge;
+          if(pyBridge && pyBridge.getVoiceConfig){
+            pyBridge.getVoiceConfig(function(raw){
+              try{
+                const o = JSON.parse(raw);
+                VOICE.mode = o.mode || "always";
+                VOICE.hotkey = o.hotkey || "F9";
+                console.log("[voice] mode=" + VOICE.mode + " hotkey=" + VOICE.hotkey);
+              }catch(e){}
+            });
+          }
+        });
+      }catch(e){
+        console.error("QWebChannel init failed", e);
+      }
+
+      const stage = document.getElementById("stage");
+      const canvas = document.getElementById("canvas");
+      const app = new PIXI.Application({ view: canvas, autoStart: true, resizeTo: stage, backgroundAlpha: 0, antialias: true });
+
+      const bubble = document.getElementById("bubble");
+      let _bubbleTimer = null;
+
+      function showBubble(text, small=false, ms=8000){
+        if(_bubbleTimer){ clearTimeout(_bubbleTimer); _bubbleTimer = null; }
+        if(text !== null && text !== undefined) bubble.textContent = text;
+        bubble.classList.toggle("small", !!small);
+        bubble.classList.add("show");
+        if(ms > 0){
+          _bubbleTimer = setTimeout(()=>{
+            bubble.classList.remove("show");
+            _bubbleTimer = null;
+          }, ms);
+        }
+      }
+
+      function hideBubble(){
+        if(_bubbleTimer){ clearTimeout(_bubbleTimer); _bubbleTimer = null; }
+        bubble.classList.remove("show");
+      }
+
+      function bubbleScrollBottom(){
+        try{ bubble.scrollTop = bubble.scrollHeight; }catch(_e){}
+      }
+
+      const { Live2DModel } = (PIXI && PIXI.live2d) ? PIXI.live2d : {};
+      if(!Live2DModel){
+        showBubble("[错误] Live2D 库未加载：请确认 assets/live2d-libs/pixi-live2d-display.min.js 存在", false, 12000);
+        return;
+      }
+
+      let model = null;
+      try{
+        model = await Live2DModel.from("assets/models/Firefly-desktop/Firefly.model3.json");
+        app.stage.addChild(model);
+      }catch(e){
+        console.error("Live2DModel load failed", e);
+        showBubble("[错误] Live2D 模型加载失败：请确认 assets/models/Firefly-desktop 目录完整", false, 12000);
+        return;
+      }
+
+      // ===== Live2D 动作/表情控制（按模型 JSON 里的“动作组/表情组”名称）=====
+      function _getMotionsSettings(){
+        try{
+          return (model && model.internalModel && model.internalModel.settings && model.internalModel.settings.motions) || null;
+        }catch(_e){
+          return null;
+        }
+      }
+
+      function resetExpression(){
+        try{
+          const em = model.internalModel.motionManager.expressionManager;
+          if(em && typeof em.resetExpression === "function"){ em.resetExpression(); return true; }
+          if(em && typeof em.reset === "function"){ em.reset(); return true; }
+        }catch(e){ console.warn("resetExpression failed", e); }
+        return false;
+      }
+
+      // 记录当前戴着的纯表情，用来实现"再触发一次 = 摘掉"
+      let _lastExpr = "";
+
+      function playMotionByName(groupName, motionName){
+        try{
+          // 特殊动作：恢复默认（摘掉墨镜之类）
+          if(motionName === "恢复"){
+            const ok = resetExpression();
+            _lastExpr = "";
+            console.log("[motion] 恢复默认表情 ok=" + ok);
+            return ok;
+          }
+
+          const motions = _getMotionsSettings();
+          const group = motions && motions[groupName];
+          if(!group || !Array.isArray(group)) return false;
+          const idx = group.findIndex(m => (m && m.Name) === motionName);
+          if(idx < 0) return false;
+
+          const def = group[idx];
+          // 纯表情条目（只有 Expression、没有 motion 文件）必须走 expression 接口，
+          // 否则 model.motion() 会因为找不到文件而静默失败
+          if(def.Expression && !def.File){
+            // 同一个表情再点一次 = 取消（墨镜戴上了就能摘）
+            if(_lastExpr === motionName){
+              resetExpression();
+              _lastExpr = "";
+              console.log("[motion] 取消表情=" + motionName);
+            }else{
+              model.expression(def.Expression);
+              _lastExpr = motionName;
+              console.log("[motion] 应用表情=" + motionName);
+            }
+            return true;
+          }
+          if(!def.File) return false;   // 既没动作文件也没表情，播不了
+
+          // pixi-live2d-display: model.motion(group, index, priority?)
+          model.motion(groupName, idx);
+          return true;
+        }catch(e){
+          console.warn("playMotionByName failed", e);
+          return false;
+        }
+      }
+
+      function setExpressionByName(exprName){
+        // 注意：这个模型把“表情组”也放在 Motions 里（Expression 字段），用 motion 触发最稳
+        return playMotionByName("表情组", exprName);
+      }
+
+      function randPick(arr){
+        if(!arr || !arr.length) return null;
+        return arr[Math.floor(Math.random() * arr.length)];
+      }
+
+      function reactToEmotion(emotion){
+        // emotion 来自后端：开心 / 一点悲伤 / 中立谨慎 / 中立
+        const emo = (emotion || "中立").trim();
+        if(emo === "开心"){
+          setExpressionByName("开心");
+          // 只留无音效的动作：拍手/会萤的自带 mp3，会和 TTS 抢声卡
+          playMotionByName("动作组", randPick(["叉腰开心","回正"]) || "回正");
+          return;
+        }
+        if(emo === "一点悲伤"){
+          setExpressionByName(randPick(["眼泪","裂开","呆愣"]) || "眼泪");
+          // 去掉捂手（带回音效）和使一颗心免于哀伤（整首歌）
+          playMotionByName("动作组", randPick(["抱胸","回正"]) || "回正");
+          return;
+        }
+        if(emo === "中立谨慎"){
+          setExpressionByName(randPick(["鄙夷","问号","流汗"]) || "问号");
+          playMotionByName("动作组", randPick(["抱胸","叉腰","思考","回正"]) || "回正");
+          return;
+        }
+        // 中立
+        setExpressionByName(randPick(["墨镜","问号","呆愣"]) || "问号");
+        playMotionByName("动作组", randPick(["回正","思考","叉腰"]) || "回正");
+      }
+
+      const PAD_X = 22;
+      const PAD_TOP = 18;
+      const PAD_BOTTOM = 18;
+      let MODEL_SCALE = 0.09;
+
+      const inputBar = document.getElementById("inputBar");
+      const hint = document.getElementById("hint");
+
+      function inputBarHeight(){
+        return (inputBar.style.display === "none") ? 0 : (inputBar.getBoundingClientRect().height + 12);
+      }
+
+      let fitting = false;
+      let lastTargetW = 0, lastTargetH = 0;
+
+      function placeModel(){
+        const usableW = app.renderer.width;
+        const usableH = app.renderer.height - inputBarHeight();
+        const b = model.getLocalBounds();
+        const cx = (b.x + b.width/2) * MODEL_SCALE;
+        const cy = (b.y + b.height/2) * MODEL_SCALE;
+        model.position.set(usableW/2 - cx, usableH/2 - cy);
+      }
+
+      function fitWindowOnce(){
+        if (fitting) return;
+        fitting = true;
+        model.scale.set(MODEL_SCALE);
+
+        const b = model.getLocalBounds();
+        const w = Math.max(1, b.width * MODEL_SCALE);
+        const h = Math.max(1, b.height * MODEL_SCALE);
+
+        const targetW = Math.ceil(w + PAD_X * 2);
+        const targetH = Math.ceil(h + PAD_TOP + PAD_BOTTOM + inputBarHeight() + 12);
+
+        const dw = Math.abs(targetW - lastTargetW);
+        const dh = Math.abs(targetH - lastTargetH);
+        if (dw < 2 && dh < 2) {
+          requestAnimationFrame(() => { placeModel(); fitting = false; });
+          return;
+        }
+        lastTargetW = targetW;
+        lastTargetH = targetH;
+
+        if (pyBridge && pyBridge.resizeWindow) {
+          pyBridge.resizeWindow(targetW, targetH);
+        }
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            placeModel();
+            fitting = false;
+          });
+        });
+      }
+
+      fitWindowOnce();
+      setTimeout(fitWindowOnce, 250);
+      setTimeout(fitWindowOnce, 900);
+
+      // ================= 悬浮球：聊天 / 语音 =================
+      const fabChat = document.getElementById("fabChat");
+      const fabVoice = document.getElementById("fabVoice");
+      let voiceOn = false;
+
+      function setInputVisible(visible){
+        if(voiceOn){ visible = false; }        // 语音模式下永远不显示输入框
+        inputBar.style.display = visible ? "flex" : "none";
+        fabChat.classList.toggle("active", visible);
+        if(hint) hint.style.display = "block";
+        setTimeout(fitWindowOnce, 0);
+      }
+
+      function setVoiceMode(on){
+        voiceOn = !!on;
+        document.body.classList.toggle("voice-on", voiceOn);
+        fabVoice.classList.toggle("active", voiceOn);
+        if(voiceOn) setInputVisible(false);
+        else setInputVisible(true);
+        try{
+          if(pyBridge && pyBridge.setVoiceMode) pyBridge.setVoiceMode(voiceOn);
+        }catch(e){ console.warn("setVoiceMode failed", e); }
+        showBubble(
+          voiceOn
+            ? (VOICE.mode === "hotkey"
+                ? "语音模式：按住 " + VOICE.hotkey + " 说话"
+                : "语音模式：点 🎤 录一句")
+            : "已切回文字模式",
+          false, 3000
+        );
+      }
+
+      fabChat.addEventListener("click", () => {
+        if(voiceOn){ setVoiceMode(false); return; }
+        setInputVisible(inputBar.style.display === "none");
+        if(inputBar.style.display !== "none") document.getElementById("inp").focus();
+      });
+
+      let listening = false;
+      fabVoice.addEventListener("click", () => {
+        if(!voiceOn) setVoiceMode(true);      // 第一次点：进语音模式
+
+        if(VOICE.mode === "hotkey"){
+          showBubble("按住 " + VOICE.hotkey + " 说话，松开发送", false, 3500);
+          return;
+        }
+
+        if(listening) return;                 // 正在听就别重复触发
+        try{
+          if(pyBridge && pyBridge.startVoice) pyBridge.startVoice();
+          else showBubble("语音接口未就绪，重启桌宠试试", false, 4000);
+        }catch(e){ console.warn("startVoice failed", e); }
+      });
+
+      // ---- 悬浮球：鼠标靠近右侧才出现 ----
+      const fabStack = document.querySelector(".fab-stack");
+      const FAB_PAD = 90;          // 感应半径（像素）
+      let fabLeaveTimer = null;
+
+      function nearFab(x, y){
+        const r = fabStack.getBoundingClientRect();
+        return x >= r.left - FAB_PAD && x <= r.right + FAB_PAD &&
+               y >= r.top - FAB_PAD && y <= r.bottom + FAB_PAD;
+      }
+
+      window.addEventListener("mousemove", (e) => {
+        const near = nearFab(e.clientX, e.clientY);
+        if(near){
+          if(fabLeaveTimer){ clearTimeout(fabLeaveTimer); fabLeaveTimer = null; }
+          fabStack.classList.add("visible");
+        }else if(fabStack.classList.contains("visible")){
+          // 离开感应区后延迟隐藏，避免抖动
+          if(!fabLeaveTimer){
+            fabLeaveTimer = setTimeout(() => {
+              fabStack.classList.remove("visible");
+              fabLeaveTimer = null;
+            }, 600);
+          }
+        }
+      });
+
+      // 鼠标离开整个窗口时立刻收起
+      document.addEventListener("mouseleave", () => {
+        fabStack.classList.remove("visible");
+        if(fabLeaveTimer){ clearTimeout(fabLeaveTimer); fabLeaveTimer = null; }
+      });
+
+      // 初始化：输入框默认可见，让 💬 同步成激活态
+      setInputVisible(true);
+
+      window.__pet_toggle_input = function(){
+        if(voiceOn) setVoiceMode(false);
+        else setInputVisible(inputBar.style.display === "none");
+      };
+      window.addEventListener("keydown",(e)=>{ if(e.key==="F2") window.__pet_toggle_input(); });
+      window.addEventListener("resize", ()=> setTimeout(() => { placeModel(); }, 0));
+
+      // 拖动窗口：优先交给 Windows 自己搬（不经过 IPC，最跟手）
+      let nativeDrag = false;          // 系统是否接管了本次拖动
+
+      // 兜底路径的按帧移动（只有系统接管失败时才会用到）
+      let dragging=false,lastX=0,lastY=0,accDx=0,accDy=0,scheduled=false;
+      let remX=0, remY=0;              // 取整后剩下的零头，留到下一帧，避免"跳一像素停一下"
+
+      function flushMove(){
+        scheduled=false;
+        const tx = accDx + remX, ty = accDy + remY;
+        const dx = Math.round(tx), dy = Math.round(ty);
+        remX = tx - dx;
+        remY = ty - dy;
+        accDx=0; accDy=0;
+        if(pyBridge && (dx||dy) && pyBridge.moveWindowBy) pyBridge.moveWindowBy(dx,dy);
+      }
+
+      stage.addEventListener("mousedown",(e)=>{
+        if(e.button!==0) return;
+        canvas.style.cursor="grabbing";
+
+        if(pyBridge && pyBridge.startDrag){
+          nativeDrag = true;                       // 先乐观设 true
+          pyBridge.startDrag(function(ok){
+            if(!ok) nativeDrag = false;            // 没接管成功 → 退回按帧移动
+          });
+          return;
+        }
+
+        // 老版本没有 startDrag，才走原来的路由
+        dragging=true; lastX=e.clientX; lastY=e.clientY;
+      });
+
+      window.addEventListener("mousemove",(e)=>{
+        if(nativeDrag) return;                     // 系统在搬窗口，别再自己动
+        if(!dragging) return;
+        accDx += (e.clientX-lastX);
+        accDy += (e.clientY-lastY);
+        lastX=e.clientX; lastY=e.clientY;
+        if(!scheduled){ scheduled=true; requestAnimationFrame(flushMove); }
+      });
+
+      window.addEventListener("mouseup",()=>{
+        if(nativeDrag){ nativeDrag=false; canvas.style.cursor="grab"; return; }
+        if(!dragging) return;
+        dragging=false; canvas.style.cursor="grab";
+        flushMove();
+      });
+
+      // 发送到 Python
+      const inp = document.getElementById("inp");
+      const btn = document.getElementById("btn");
+      function send(){
+        const t = (inp.value||"").trim();
+        if(!t || !pyBridge || !pyBridge.askLLM) return;
+        inp.value="";
+        showBubble("思考中…", true, 120000);
+        pyBridge.askLLM(t);
+      }
+      btn.addEventListener("click", send);
+      inp.addEventListener("keydown", (e)=>{ if(e.key==="Enter") send(); });
+
+      // ===== 嘴型同步 =====
+      let _mouthAnim = false;
+      let _mouthT = 0;
+      function setMouthOpen(v) {
+        try {
+          model.internalModel.coreModel.setParameterValueById('ParamMouthOpenY', Math.max(0, Math.min(1, v)));
+        } catch(e) {}
+      }
+      app.ticker.add(() => {
+        if (!model || !_mouthAnim) return;
+        _mouthT += app.ticker.deltaMS / 1000;
+        // 模拟说话节奏：快速开合 + 轻微随机感
+        const v = Math.max(0, Math.sin(_mouthT * 18) * 0.6 + Math.sin(_mouthT * 7) * 0.25 + 0.15);
+        setMouthOpen(v);
+      });
+
+      window.__pet_on_py_event = function(event, payload){
+        if(event==="tts_start"){
+          _mouthAnim = true;
+          _mouthT = 0;
+        }else if(event==="tts_end"){
+          _mouthAnim = false;
+          setMouthOpen(0);
+        }else if(event==="llm_status" && payload && payload.status==="thinking"){
+          showBubble("思考中…", true, 120000);
+          // AI 思考时：触发“思考”动作
+          playMotionByName("动作组", "思考");
+        }else if(event==="llm_start"){
+          // 新一轮回答开始：清空气泡，准备逐字追加
+          bubble.textContent = "";
+          bubble.classList.remove("small");
+          bubble.classList.add("show");
+          if(_bubbleTimer){ clearTimeout(_bubbleTimer); _bubbleTimer = null; }
+        }else if(event==="llm_delta"){
+          // 逐字显示（这里绝不能写动作逻辑，否则气泡不出字）
+          const t = (payload && payload.text) ? payload.text : "";
+          if(t){
+            bubble.textContent += t;
+            bubble.classList.add("show");
+            bubbleScrollBottom();
+          }
+        }else if(event==="pet_motion"){
+          // 后端从（动作名）里解析出来的动作，单独一条事件
+          const name = (payload && payload.name) ? payload.name : "";
+          if(name){
+            // 先试动作组，找不到再试表情组
+            const ok = playMotionByName("动作组", name) || playMotionByName("表情组", name);
+            console.log("[motion] 收到=" + name + " 播放成功=" + ok);
+          }
+        }else if(event==="voice_config"){
+          VOICE.mode = (payload && payload.mode) || "always";
+          VOICE.hotkey = (payload && payload.hotkey) || "F9";
+          console.log("[voice] 配置更新 mode=" + VOICE.mode + " hotkey=" + VOICE.hotkey);
+          if(voiceOn){
+            document.getElementById("voiceTip").textContent =
+              (VOICE.mode === "hotkey")
+                ? "🎤 按住 " + VOICE.hotkey + " 说话"
+                : "🎤 语音模式（点 🎤 录一句）";
+          }
+        }else if(event==="voice_state"){
+          const st = (payload && payload.state) || "";
+          const tip = document.getElementById("voiceTip");
+          listening = (st === "listening");
+          fabVoice.classList.toggle("listening", listening);
+
+          if(st === "listening"){
+            tip.textContent = (VOICE.mode === "hotkey")
+              ? "🎤 正在听…松开发送"
+              : "🎤 正在听…说完停顿一下";
+          }else if(st === "transcribing"){
+            tip.textContent = "📝 识别中…";
+          }else if(st === "empty"){
+            tip.textContent = "🎤 没听清，再试一次";
+            setTimeout(function(){
+              if(!listening){
+                tip.textContent = (VOICE.mode === "hotkey")
+                  ? "🎤 按住 " + VOICE.hotkey + " 说话"
+                  : "🎤 语音模式（点 🎤 录一句）";
+              }
+            }, 2500);
+          }else if(st === "error"){
+            tip.textContent = "🎤 语音服务未就绪";
+            showBubble("语音识别失败：" + ((payload && payload.message) || "未知"), false, 7000);
+          }else{
+            tip.textContent = (VOICE.mode === "hotkey")
+              ? "🎤 按住 " + VOICE.hotkey + " 说话"
+              : "🎤 语音模式（点 🎤 录一句）";
+          }
+        }else if(event==="llm_reply"){
+          showBubble((payload && payload.answer) ? payload.answer : "(空回复)");
+          // 已经有动作标签时跳过情绪兜底，避免把标签动作顶掉
+          if(!(payload && payload.skip_motion)){
+            reactToEmotion(payload && payload.emotion);
+          }
+        }else if(event==="llm_error"){
+          showBubble("[错误] " + ((payload && payload.error) ? payload.error : "unknown"), false, 9000);
+        }
+      };
+    })();
+  </script>
+</body>
+</html>
+

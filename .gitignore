@@ -1,0 +1,38 @@
+# ===== 运行期产物 =====
+__pycache__/
+*.py[cod]
+*.log
+logs/
+pet_start.log
+
+# 记忆数据库（属于用户数据，不入库）
+data/memory.db
+data/memory.db-journal
+data/memory.db-wal
+data/memory.db-shm
+
+# 用户自己的配置（含 API Key，绝对不能上传）
+firefly_config.json
+
+# 虚拟环境
+.venv/
+venv/
+
+# 编辑器
+.idea/
+.vscode/
+*.swp
+
+# 体积巨大、需要单独安装的组件
+v4/
+*.zip
+*.7z
+
+# 快捷方式（每台机器路径不同）
+*.lnk
+
+# 临时目录
+_trash/
+
+# 诊断工具的产物
+tools/tts_probe/

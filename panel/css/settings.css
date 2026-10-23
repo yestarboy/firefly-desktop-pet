@@ -1,0 +1,66 @@
+/* ============================================================
+   settings.css —— 设置页专属
+   ============================================================ */
+
+/* ---- 左侧导航 + 右侧内容 ---- */
+.settings-layout{
+  display: grid;
+  grid-template-columns: 148px minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.side-nav{
+  position: sticky;
+  top: 62px;                 /* 让开顶部粘住的 tab 栏 */
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 0;
+  border-right: 1px solid var(--line);
+}
+
+.side-nav a{
+  display: block;
+  padding: 8px 12px;
+  border-radius: 8px 0 0 8px;
+  border-left: 2px solid transparent;
+  color: var(--dim);
+  font-size: 13px;
+  text-decoration: none;
+  transition: color .15s, background .15s, border-color .15s;
+}
+
+.side-nav a:hover{
+  color: var(--text);
+  background: rgba(255,255,255,.04);
+}
+
+.side-nav a.active{
+  color: var(--accent);
+  border-left-color: var(--accent);
+  background: rgba(91,140,255,.10);
+}
+
+.settings-main{ min-width: 0; }
+
+/* ---- 表单网格 ---- */
+.grid{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:12px 16px;
+}
+
+.wide{ grid-column:1 / -1; }
+
+.inline{
+  display:flex;
+  gap:8px;
+  align-items:center;
+}
+
+.inline input{ flex:1; }
+
+.inline select{ flex:1; }
+
+.inline button{ flex:none; }

@@ -1,0 +1,66 @@
+/* ============================================================
+   chat.css —— 对话页专属
+   注意：气泡外层用 .chat-row，不要用 .msg（.note 已占用状态文字）
+   ============================================================ */
+
+#page-chat{
+  display:flex;
+  flex-direction:column;
+  height:calc(100vh - 200px);
+  min-height:320px;
+}
+
+.chat-list{
+  flex:1;
+  overflow-y:auto;
+  display:flex;
+  flex-direction:column;
+  gap:12px;
+  padding:4px 2px 12px;
+}
+
+.chat-row{ display:flex; }
+
+.chat-row.me{ justify-content:flex-end; }
+
+.chat-row .bubble{
+  max-width:74%;
+  padding:10px 14px;
+  border-radius:14px;
+  line-height:1.65;
+  white-space:pre-wrap;
+  word-break:break-word;
+}
+
+.chat-row.me .bubble{
+  background:var(--accent);
+  color:#fff;
+  border-bottom-right-radius:4px;
+}
+
+.chat-row.bot .bubble{
+  background:var(--panel);
+  border:1px solid var(--line);
+  border-bottom-left-radius:4px;
+}
+
+.chat-row.bot .bubble:empty::after{
+  content:"…";
+  color:var(--dim);
+}
+
+.chat-input{
+  display:flex;
+  gap:8px;
+  padding-top:12px;
+  border-top:1px solid var(--line);
+}
+
+.chat-input input{ flex:1; }
+
+.chat-empty{
+  color:var(--dim);
+  font-size:13px;
+  text-align:center;
+  margin-top:48px;
+}

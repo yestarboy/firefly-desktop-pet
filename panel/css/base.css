@@ -1,0 +1,139 @@
+/* ============================================================
+   base.css —— 设计变量、重置、通用控件
+   所有页面共用的东西放这里；页面专属样式放各自文件
+   ============================================================ */
+
+:root{
+  --bg:#15161a;
+  --panel:#1d1f26;
+  --line:#2c2f3a;
+  --text:#e6e8ee;
+  --dim:#8d93a5;
+  --accent:#5b8cff;
+  --ok:#3ecf8e;
+  --err:#ff6b6b;
+  --radius:12px;
+}
+
+*{ box-sizing:border-box; }
+
+html, body{ height:100%; }
+
+body{
+  margin:0;
+  padding:22px 26px 26px;
+  background:var(--bg);
+  color:var(--text);
+  font:14px/1.6 "Microsoft YaHei", "Segoe UI", sans-serif;
+}
+
+h1{ font-size:18px; margin:0; }
+
+h2{
+  font-size:14px;
+  margin:0 0 12px;
+  color:var(--accent);
+  letter-spacing:.5px;
+}
+
+/* ---- 卡片 ---- */
+.card{
+  background:var(--panel);
+  border:1px solid var(--line);
+  border-radius:var(--radius);
+  padding:16px 18px;
+  margin-bottom:16px;
+  /* 左侧导航跳转时，别被顶部粘住的 tab 栏挡住 */
+  scroll-margin-top: 72px;
+}
+
+/* ---- 表单 ---- */
+label{
+  display:flex;
+  flex-direction:column;
+  gap:5px;
+  font-size:12px;
+  color:var(--dim);
+}
+
+input, select, textarea{
+  width:100%;
+  padding:8px 10px;
+  border-radius:8px;
+  border:1px solid var(--line);
+  background:#111218;
+  color:var(--text);
+  font:13px/1.4 inherit;
+  outline:none;
+}
+
+input:focus, select:focus, textarea:focus{ border-color:var(--accent); }
+
+textarea{ resize:vertical; font-family:inherit; }
+
+/* ---- 按钮 ---- */
+button{
+  padding:8px 16px;
+  border-radius:8px;
+  border:1px solid transparent;
+  background:var(--accent);
+  color:#fff;
+  font-size:13px;
+  cursor:pointer;
+}
+
+button:hover:not(:disabled){ filter:brightness(1.1); }
+
+button:disabled{ opacity:.5; cursor:default; }
+
+button.ghost{
+  background:transparent;
+  border-color:var(--line);
+  color:var(--text);
+}
+
+button.ghost:hover{ border-color:var(--accent); color:var(--accent); }
+
+.row{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  margin-top:14px;
+  flex-wrap:wrap;
+}
+
+/* ---- 状态文字（注意：不要叫 .msg，会和聊天气泡撞名）---- */
+.note{
+  font-size:12px;
+  color:var(--dim);
+  white-space:pre-wrap;
+}
+
+.note.ok{ color:var(--ok); }
+
+.note.err{ color:var(--err); }
+
+.hint{
+  font-size:12px;
+  color:var(--dim);
+  margin:10px 0 0;
+}
+
+.hint code{
+  background:#111218;
+  border:1px solid var(--line);
+  border-radius:4px;
+  padding:1px 5px;
+}
+
+pre{
+  margin:0;
+  padding:12px;
+  border-radius:8px;
+  background:#111218;
+  border:1px solid var(--line);
+  font-size:12px;
+  color:var(--dim);
+  overflow:auto;
+  max-height:160px;
+}

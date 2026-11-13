@@ -37,10 +37,6 @@ _trash/
 # 诊断工具的产物
 tools/tts_probe/
 
-# 3D 模型（体积大、版权独立，只保留说明文件）
-assets/models3d/*
-!assets/models3d/README.md
-*.pmx
 *.vmd
 *.vrm
 

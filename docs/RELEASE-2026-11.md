@@ -101,8 +101,9 @@
 
 - **新增配置项**会自动补默认值，旧配置文件无需手动改：
   `wake_word` / `wake_enabled` / `show_hint` / `stt_idle_min`
-- **模型文件不入库**：PMX / VRM / VMD 与贴图体积大且有独立版权，仓库只保留说明文件，
-  需要自行放入 `assets/models3d/`
+- **模型文件已入库**：`assets/models3d/` 内置流萤 3.0（PMX + 贴图，约 8.9 MB），
+  开箱即可看到 3D 面板；版权归原作者/发行方所有，仅供学习演示，请勿商用
+- VMD 动作与 VRM 模型仍未入库（`.gitignore` 已忽略），需要时自行放入
 - 依赖两个外部服务：GPT-SoVITS（TTS，9880）与 FunASR（STT，9881）
 - 想省内存可以把 `stt_idle_min` 调小（分钟），识别模型空闲即释放；`0` 表示常驻
 

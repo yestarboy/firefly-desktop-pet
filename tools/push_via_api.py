@@ -169,23 +169,58 @@ def main() -> int:
     if "--message" in args:
         msg = args[args.index("--message") + 1]
 
-    # 3) 建 blob
+    # 3) 先取远端完整 tree，用来跳过没变化的文件、避免重复删除
+    remote_map = {}
+    rt = s.get(
+        f"{API}/repos/{REPO}/git/trees/{remote_tree}?recursive=1", timeout=120
+    )
+    if rt.status_code == 200:
+        remote_map = {
+            item["path"]: item["sha"]
+            for item in rt.json().get("tree", [])
+            if item["type"] == "blob"
+        }
+    print(f"远端已有文件: {len(remote_map)}")
+
+    # 4) 建 blob（跳过内容相同的文件）
     entries = []
+    added = modified = deleted = skipped = 0
     for st, p in rows:
         if st == "D":
-            entries.append({"path": p, "mode": "100644", "type": "blob", "sha": None})
+            if p in remote_map:
+                entries.append({"path": p, "mode": "100644", "type": "blob", "sha": None})
+                deleted += 1
+            else:
+                skipped += 1          # 远端已经没有了，不用再删
+            continue
+
+        sha = blob_for(p)
+        if remote_map.get(p) == sha:
+            skipped += 1              # 内容一样，不用进 tree
+            continue
+
+        entries.append({"path": p, "mode": "100644", "type": "blob", "sha": sha})
+        if st == "A":
+            added += 1
         else:
-            sha = blob_for(p)
-            entries.append({"path": p, "mode": "100644", "type": "blob", "sha": sha})
-            print(f"  blob {p} -> {sha[:7]}")
+            modified += 1
+        print(f"  {st} {p} -> {sha[:7]}")
+
+    print(f"实际变更: 新增 {added} / 修改 {modified} / 删除 {deleted} / 跳过 {skipped}")
+    if not entries:
+        print("没有需要提交的变更")
+        return 0
 
     # 4) 建 tree（以远端 tree 为基准）
     tree = s.post(
         f"{API}/repos/{REPO}/git/trees",
         json={"base_tree": remote_tree, "tree": entries},
-        timeout=120,
+        timeout=300,
     )
-    tree.raise_for_status()
+    if tree.status_code != 201:
+        print("tree 创建失败:", tree.status_code)
+        print("返回:", tree.text[:600])
+        return 3
     tree_sha = tree.json()["sha"]
     print(f"tree: {tree_sha[:7]}")
 

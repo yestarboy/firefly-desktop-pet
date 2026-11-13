@@ -19,6 +19,7 @@ import sqlite3
 import threading
 import time
 import unicodedata
+from contextlib import contextmanager
 from pathlib import Path
 from typing import List, Optional
 
@@ -45,15 +46,63 @@ def _tier_days(hits: int) -> int:
 
 def _connect() -> sqlite3.Connection:
     DB_DIR.mkdir(parents=True, exist_ok=True)
-    con = sqlite3.connect(str(DB_PATH), timeout=10)
-    con.row_factory = sqlite3.Row
-    con.execute("PRAGMA journal_mode=WAL")
-    con.execute("PRAGMA synchronous=NORMAL")
-    return con
+
+    last = None
+    for attempt in range(3):
+        con = None
+        try:
+            con = sqlite3.connect(str(DB_PATH), timeout=10)
+            con.row_factory = sqlite3.Row
+
+            try:
+                con.execute("PRAGMA journal_mode=WAL")
+            except sqlite3.OperationalError:
+                # WAL 要额外的 -wal/-shm 文件，某些环境（杀软、残留锁、
+                # 非 NTFS 卷）会报 disk I/O error，退回传统日志模式即可，
+                # 功能完全不受影响。
+                con.execute("PRAGMA journal_mode=DELETE")
+
+            con.execute("PRAGMA synchronous=NORMAL")
+            return con
+        except sqlite3.OperationalError as e:
+            last = e
+            if con is not None:
+                try:
+                    con.close()
+                except Exception:
+                    pass
+            time.sleep(0.2 * (attempt + 1))
+
+    raise last if last else RuntimeError("打开记忆库失败")
+
+
+@contextmanager
+def _db():
+    """正确用完就关的连接。
+
+    注意：`with sqlite3.connect(...) as con` 只负责提交/回滚，
+    **不会关闭连接**，每次调用都会泄漏一个文件句柄。句柄攒多了，
+    WAL 的 -wal/-shm 就无法清理，进而报 disk I/O error。
+    """
+    con = _connect()
+    try:
+        yield con
+        con.commit()
+    except Exception:
+        try:
+            con.rollback()
+        except Exception:
+            pass
+        raise
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
 
 
 def init_db() -> None:
-    with _connect() as con:
+    with _db() as con:
         con.execute(
             """
             CREATE TABLE IF NOT EXISTS memories (
@@ -101,7 +150,7 @@ def remember(content: str, kind: str = "fact", now: Optional[float] = None) -> d
     fp = fingerprint(content)
     now = time.time() if now is None else now
 
-    with _lock, _connect() as con:
+    with _lock, _db() as con:
         row = con.execute(
             "SELECT id, hits FROM memories WHERE fingerprint = ?", (fp,)
         ).fetchone()
@@ -142,7 +191,7 @@ def remember(content: str, kind: str = "fact", now: Optional[float] = None) -> d
 
 def purge_expired(now: Optional[float] = None) -> int:
     now = time.time() if now is None else now
-    with _lock, _connect() as con:
+    with _lock, _db() as con:
         cur = con.execute("DELETE FROM memories WHERE expires_at <= ?", (now,))
         return cur.rowcount or 0
 
@@ -161,7 +210,7 @@ def recall(query: str = "", limit: int = 8, now: Optional[float] = None) -> List
     sql += " ORDER BY hits DESC, last_seen DESC LIMIT ?"
     args.append(int(limit))
 
-    with _connect() as con:
+    with _db() as con:
         return [dict(r) for r in con.execute(sql, args)]
 
 
@@ -182,7 +231,7 @@ def prompt_block(limit: int = 8) -> str:
 
 def stats() -> dict:
     now = time.time()
-    with _connect() as con:
+    with _db() as con:
         total = con.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
         alive = con.execute(
             "SELECT COUNT(*) FROM memories WHERE expires_at > ?", (now,)

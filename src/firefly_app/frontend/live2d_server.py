@@ -25,7 +25,14 @@ class Live2DServer:
             def __init__(self, *args, **kwargs):
                 # 注意：这里的 self 是 Handler 实例，不是 Live2DServer
                 super().__init__(*args, directory=str(CustomHandler.root_dir), **kwargs)
-            
+
+            def end_headers(self):
+                # 关键：QtWebEngine 会缓存 html/js/css，改了前端却看不到效果。
+                # 本地服务器本来就不该缓存，统一加 no-store。
+                self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+                self.send_header("Pragma", "no-cache")
+                super().end_headers()
+
             def log_message(self, format, *args):
                 pass  # 禁用日志输出
         

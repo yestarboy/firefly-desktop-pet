@@ -39,6 +39,9 @@ from firefly_app.paths import ICONS_DIR, LOGS_DIR
 # 由 tools/stt_server.py 提供（跑在 GPT-SoVITS 的 runtime Python 里）
 STT_URL = "http://127.0.0.1:9881"
 
+# TTS 正在播报时置位：唤醒词监听要暂停，否则会把自己的声音听成指令
+_tts_speaking = threading.Event()
+
 # ====== LLM 配置 ======
 # 已经迁到 firefly_app/backend/llm.py：
 #   - 线上：DeepSeek（OpenAI 兼容 /chat/completions，SSE 流式）
@@ -139,6 +142,17 @@ class DebugWebEnginePage(QWebEnginePage):
 
 def find_tray_icon() -> QIcon:
     root = Path(__file__).resolve().parent
+
+    # 多尺寸的 firefly.ico 优先（托盘/任务栏各种缩放都清晰）
+    for p in (ICONS_DIR / "firefly.ico", root / "assets" / "icons" / "firefly.ico"):
+        try:
+            if p.exists():
+                icon = QIcon(str(p))
+                if not icon.isNull():
+                    return icon
+        except Exception:
+            pass
+
     candidates = []
     for d in (ICONS_DIR, root / "assets" / "icons", root):
         try:
@@ -210,12 +224,20 @@ class PetWindow(QWidget):
         print("桌宠启动完成（托盘可操作）")
 
         # 注册 TTS 嘴型回调
+        # 用 broadcast 而不是 send_to_js：桌宠窗口和控制台面板都要收到，
+        # 面板里的 3D 模型靠这两个事件做口型同步。
         try:
             from firefly_app.backend.voice import set_tts_callbacks
-            set_tts_callbacks(
-                on_start=lambda: self.send_to_js("tts_start", {}),
-                on_end=lambda: self.send_to_js("tts_end", {}),
-            )
+
+            def _on_tts_start():
+                _tts_speaking.set()     # 说话期间暂停唤醒词监听，避免自听
+                ui_bus.broadcast("tts_start", {})
+
+            def _on_tts_end():
+                _tts_speaking.clear()
+                ui_bus.broadcast("tts_end", {})
+
+            set_tts_callbacks(on_start=_on_tts_start, on_end=_on_tts_end)
         except Exception as e:
             print(f"[pet] TTS 回调注册失败: {e}")
 
@@ -296,7 +318,11 @@ class PetWindow(QWidget):
             print(f"[hotkey] 切换语音模式失败: {e}", flush=True)
 
     def open_settings(self):
-        """打开可视化设置窗口（懒加载，只创建一次）"""
+        """打开可视化设置窗口（懒加载，只创建一次）
+
+        打开时把桌宠本体藏起来：控制台里已经有 3D 角色，
+        两个窗口叠着既挡视线又白烧一份 GPU。
+        """
         try:
             if getattr(self, "_settings_win", None) is None:
                 from firefly_app.frontend.settings_window import SettingsWindow
@@ -305,6 +331,7 @@ class PetWindow(QWidget):
             self._settings_win.show()
             self._settings_win.raise_()
             self._settings_win.activateWindow()
+            self.hide()
         except Exception as e:
             print(f"[settings] 打开失败: {e}", flush=True)
 
@@ -361,6 +388,110 @@ class PetWindow(QWidget):
         super().closeEvent(event)
 
 
+class WakeListener:
+    """全程麦 + 唤醒词：一直听，只有听到唤醒词才响应
+
+    实现上就是循环调用 STT 服务的 /listen（它自带 VAD 断句）：
+    听到一句 → 转文字 → 含唤醒词就处理剩下的部分，否则丢掉。
+    说话期间暂停，避免把自己的 TTS 听成指令。
+    """
+
+    def __init__(self, bridge):
+        self.bridge = bridge
+        self._stop = threading.Event()
+        self._thread = None
+        # 只喊了唤醒词时，这个时间点之前说的下一句会被当成指令
+        self._await_until = 0.0
+
+    def start(self):
+        if self._thread and self._thread.is_alive():
+            return
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread.start()
+        print("[wake] 唤醒词监听已启动", flush=True)
+
+    def stop(self):
+        self._stop.set()
+
+    def _cfg(self):
+        """每次循环都读一遍配置，改唤醒词/开关立即生效（不做缓存）"""
+        try:
+            from firefly_app.frontend import settings_window as sw
+
+            raw = sw._read_raw()
+            return (
+                str(raw.get("wake_word") or "萤宝").strip(),
+                raw.get("wake_enabled", True) is not False,
+                str(raw.get("voice_mode") or "always"),
+            )
+        except Exception:
+            return "萤宝", True, "always"
+
+    def _loop(self):
+        import requests
+
+        armed = None   # 上一次的监听状态，用于打印"开始/暂停"
+
+        while not self._stop.is_set():
+            word, enabled, mode = self._cfg()
+
+            now_armed = bool(enabled and mode == "always" and word)
+            if now_armed != armed:
+                armed = now_armed
+                print(
+                    f"[wake] {'开始监听（全程麦）' if armed else '暂停监听'} "
+                    f"mode={mode} word={word!r}",
+                    flush=True,
+                )
+
+            # 只在"全程麦"且开启唤醒词时才监听
+            if not armed:
+                time.sleep(1.0)
+                continue
+
+            if _tts_speaking.is_set():
+                time.sleep(0.3)
+                continue
+
+            try:
+                r = requests.post(f"{STT_URL}/listen", timeout=60)
+                text = str((r.json() or {}).get("text") or "").strip()
+            except Exception:
+                time.sleep(1.5)
+                continue
+
+            if not text:
+                continue
+
+            # 调试用：把听到的每一句都打出来，方便确认唤醒词为什么没命中
+            print(f"[wake] 听到: {text!r}", flush=True)
+
+            # 刚说完唤醒词、还没给指令：给 8 秒的"接着说"窗口
+            if self._await_until and time.time() < self._await_until:
+                if word not in text:
+                    self._await_until = 0.0
+                    print(f"[wake] 补充指令 {text!r}", flush=True)
+                    self.bridge.askLLM(text)
+                    continue
+                self._await_until = 0.0
+
+            if word not in text:
+                continue
+
+            rest = text.split(word, 1)[1].strip(" ，,。.！!？?~～、")
+            print(f"[wake] 命中 {text!r} → 指令 {rest!r}", flush=True)
+
+            if rest:
+                self.bridge.askLLM(rest)
+            else:
+                # 只喊了唤醒词：应答一声，并开启"接着说话"窗口
+                self._await_until = time.time() + 8.0
+                ui_bus.broadcast(
+                    "llm_reply",
+                    {"answer": "我在。", "emotion": "开心", "skip_motion": True},
+                )
+
+
 class Bridge(QObject):
     def __init__(self, win: PetWindow):
         super().__init__()
@@ -368,6 +499,20 @@ class Bridge(QObject):
         self._seq = 0          # 每问一次 +1，用来丢掉上一轮的过期流
         self._ptt_active = False   # 热键是否正处于"按住录音"状态
         self._ptt_fail_at = 0.0    # 上次启动失败的时间（冷却用）
+        # 短期对话记忆（最近几轮），让"它还记得刚才说了什么"
+        self._history = []
+        self._history_max = 16     # 8 轮往返
+        self._history_lock = threading.Lock()
+
+    @pyqtSlot(result=str)
+    def usageInfo(self) -> str:
+        """当天 token 用量 + 账户余额（鼠标悬停桌宠时显示）"""
+        try:
+            from firefly_app.backend import llm as _llm
+
+            return json.dumps(_llm.usage_info(), ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     @pyqtSlot(int, int)
     def moveWindowBy(self, dx, dy):
@@ -409,7 +554,29 @@ class Bridge(QObject):
 
     @pyqtSlot()
     def startVoice(self):
-        """点 🎤：录一句 → 识别 → 直接提问（全程麦模式）"""
+        """点 🎤 的行为
+
+        - 懒人麦（always + 唤醒词）：麦克风已经在常听，点它没意义，
+          只提示"直接叫唤醒词"。
+        - 其它情况：录一句 → 识别 → 提问。
+        """
+        mode, _name, _vk = self._voice_cfg()
+        try:
+            from firefly_app.frontend import settings_window as sw
+
+            raw = sw._read_raw()
+            wake_on = raw.get("wake_enabled", True) is not False
+            wake_word = str(raw.get("wake_word") or "萤宝")
+        except Exception:
+            wake_on, wake_word = True, "萤宝"
+
+        if mode == "always" and wake_on:
+            ui_bus.broadcast(
+                "voice_state",
+                {"state": "hint", "message": f"直接说「{wake_word}」+ 指令就行"},
+            )
+            return
+
         threading.Thread(target=self._voice_worker, daemon=True).start()
 
     @pyqtSlot(result=str)
@@ -587,6 +754,23 @@ class Bridge(QObject):
             target=self._reply_worker, args=(q, seq, mem_block), daemon=True
         ).start()
 
+    def _history_snapshot(self):
+        """最近几轮对话（给 llm 做上下文）"""
+        with self._history_lock:
+            return list(self._history)
+
+    def _remember(self, q: str, a: str):
+        """把一轮问答存进短期上下文，超过上限就丢最旧的"""
+        q = (q or "").strip()
+        a = (a or "").strip()
+        if not q or not a:
+            return
+        with self._history_lock:
+            self._history.append({"role": "user", "content": q})
+            self._history.append({"role": "assistant", "content": a})
+            while len(self._history) > self._history_max:
+                self._history.pop(0)
+
     def _reply_worker(self, q: str, seq: int, mem_block: str = ""):
         """流式收字 → 解析动作 → 逐句合成播放（第一句一成型就开口）"""
         from firefly_app.backend import llm
@@ -636,9 +820,36 @@ class Bridge(QObject):
             )
             spoke_any = True
 
+        # 本地指令优先：不花 token、不等模型，说完就执行
+        try:
+            from firefly_app.backend import skills
+
+            hit = skills.try_handle(q)
+        except Exception as e:
+            print(f"[skills] 解析失败: {e}", flush=True)
+            hit = None
+
+        if hit:
+            print(f"[skills] 命中 {hit.get('action')}: {hit.get('text')}", flush=True)
+            ui_bus.broadcast("llm_start", {"q": q})
+            ui_bus.broadcast(
+                "llm_reply",
+                {
+                    "answer": hit["text"],
+                    "emotion": hit.get("emotion", "开心"),
+                    "skip_motion": True,
+                },
+            )
+            say(hit["text"])
+            self._remember(q, hit["text"])
+            return
+
+        # 带上最近几轮对话，这样"它还记得刚才说了什么"
+        history = self._history_snapshot()
+
         try:
             started = False
-            for piece in llm.chat_stream(q, extra_system=mem_block):
+            for piece in llm.chat_stream(q, history=history, extra_system=mem_block):
                 if stale():
                     return
                 if not started:
@@ -689,6 +900,9 @@ class Bridge(QObject):
                 {"q": q, "answer": ans, "emotion": emo, "skip_motion": had_motion},
             )
 
+            # 记进短期上下文，下一轮就能接上
+            self._remember(q, ans)
+
             # 后台把这一轮提炼成记忆（另起线程，不影响说话）
             try:
                 from firefly_app.backend import memory
@@ -714,6 +928,52 @@ def main():
             pass
 
         _log_line("==== live2d_pet start ====")
+
+        # 任务栏图标：不设置 AppUserModelID 的话，Windows 会把窗口
+        # 归到 python.exe 名下、显示 Python 图标，而不是我们的图标。
+        # 注意：AUMID 还必须在注册表里登记图标，否则任务栏会回退到 exe 图标。
+        try:
+            import ctypes as _ctypes
+
+            _aumid = "Firefly.DesktopPet.1"
+            _ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(_aumid)
+
+            try:
+                import winreg
+
+                _icon = Path(__file__).resolve().parent / "assets" / "icons" / "firefly.ico"
+                if not _icon.exists():
+                    _icon = Path(__file__).resolve().parent / "assets" / "icons" / "bitbug_favicon.ico"
+
+                _key_path = r"Software\Classes\AppUserModelId" + "\\" + _aumid
+                with winreg.CreateKeyEx(
+                    winreg.HKEY_CURRENT_USER, _key_path, 0, winreg.KEY_WRITE
+                ) as _k:
+                    winreg.SetValueEx(_k, "DisplayName", 0, winreg.REG_SZ, "Firefly 控制台")
+                    if _icon.exists():
+                        winreg.SetValueEx(_k, "IconUri", 0, winreg.REG_SZ, str(_icon))
+                print(f"[pet] 任务栏标识已登记: {_aumid}", flush=True)
+            except Exception as e:
+                print(f"[pet] 登记任务栏图标失败: {e}", flush=True)
+        except Exception as e:
+            print(f"[pet] 设置 AppUserModelID 失败: {e}", flush=True)
+
+        # 压一下 WebEngine 的内存：限制渲染进程数、限制 V8 老生代，
+        # 关掉用不上的磁盘着色器缓存（15G 内存的机器上这点很关键）
+        try:
+            import os as _os
+
+            flags = _os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "")
+            extra = (
+                "--renderer-process-limit=1 "
+                "--js-flags=--max-old-space-size=256 "
+                "--disable-gpu-shader-disk-cache"
+            )
+            if "--max-old-space-size" not in flags:
+                _os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (flags + " " + extra).strip()
+                print("[mem] 已设置 WebEngine 内存限制参数", flush=True)
+        except Exception:
+            pass
 
         # 初始化记忆库并清理过期记录
         try:
@@ -743,6 +1003,18 @@ def main():
         app = QApplication(sys.argv)
         app.setQuitOnLastWindowClosed(False)
 
+        # 关掉 WebEngine 的磁盘 HTTP 缓存。
+        # 否则改了 panel 的 js/css 后，页面还是加载旧版本（服务器加了 no-store
+        # 也救不了已缓存的条目），排查起来极其费劲。
+        try:
+            from PyQt6.QtWebEngineCore import QWebEngineProfile
+
+            QWebEngineProfile.defaultProfile().setHttpCacheType(
+                QWebEngineProfile.HttpCacheType.MemoryHttpCache
+            )
+        except Exception as e:
+            print(f"[pet] 设置 WebEngine 缓存失败: {e}", flush=True)
+
         # 全局窗口/任务栏图标（托盘图标另有 find_tray_icon）
         try:
             _icon = find_tray_icon()
@@ -753,6 +1025,64 @@ def main():
 
         win = PetWindow()
         win.show()
+
+        # 开发用：FIREFLY_OPEN_PANEL=1 时自动打开控制台面板。
+        # 无界面环境下（我这边）没法点托盘，靠它才能抓到面板的 [panel] 日志。
+        try:
+            import os
+
+            if os.environ.get("FIREFLY_OPEN_PANEL") == "1":
+                from PyQt6.QtCore import QTimer
+
+                QTimer.singleShot(2000, win.open_settings)
+
+                # 再等渲染稳定，自动截一张面板图存到 logs/panel-shot.png
+                if os.environ.get("FIREFLY_SHOT") == "1":
+
+                    def _shot(idx=1):
+                        try:
+                            w = getattr(win, "_settings_win", None)
+                            if w is None:
+                                return
+                            from firefly_app.paths import LOGS_DIR
+
+                            # 窗口若处于隐藏/最小化，grab() 会拿到空白图
+                            if not w.isVisible():
+                                w.show()
+                            w.raise_()
+                            w.activateWindow()
+
+                            name = "panel-shot.png" if idx == 1 else f"panel-shot{idx}.png"
+                            out = LOGS_DIR / name
+                            ok = w.grab().save(str(out), "PNG")
+                            print(f"[shot] {'已保存' if ok else '保存失败'} {out}", flush=True)
+                        except Exception as e:
+                            print(f"[shot] 截图失败: {e}", flush=True)
+
+                    # 连拍两张（间隔 3 秒），用来确认待机动画真的在动
+                    QTimer.singleShot(12000, _shot)
+                    QTimer.singleShot(15000, lambda: _shot(2))
+
+                    # 抽搐检测用：短时间内连拍多张，由脚本比对相邻帧差异
+                    if os.environ.get("FIREFLY_BURST") == "1":
+
+                        def _burst(i):
+                            try:
+                                w = getattr(win, "_settings_win", None)
+                                if w is None:
+                                    return
+                                from firefly_app.paths import LOGS_DIR
+
+                                w.grab().save(str(LOGS_DIR / f"burst-{i:02d}.png"), "PNG")
+                            except Exception:
+                                pass
+
+                        for _i in range(10):
+                            _start = int(os.environ.get("FIREFLY_BURST_AT", "16000"))
+                            QTimer.singleShot(_start + _i * 160, lambda i=_i: _burst(i))
+                        print("[shot] 连拍 10 张用于抽搐检测", flush=True)
+        except Exception as e:
+            print(f"[pet] 自动打开面板失败: {e}", flush=True)
 
         # 后台预热 TTS，避免"第一句特别慢"
         try:
@@ -774,6 +1104,12 @@ def main():
                 f"[hotkey] 语音模式={raw['voice_mode']} 热键={raw['voice_hotkey']}",
                 flush=True,
             )
+
+            # 底部提示条开关（设置里可关）
+            try:
+                win.send_to_js("set_hint", {"show": bool(raw.get("show_hint", True))})
+            except Exception:
+                pass
         except Exception as e:
             print(f"[hotkey] 读取语音配置失败: {e}", flush=True)
 
@@ -792,6 +1128,80 @@ def main():
                 print("[hotkey] 安装键盘钩子失败（热键麦不可用）", flush=True)
         except Exception as e:
             print(f"[hotkey] 启动失败: {e}", flush=True)
+
+        # 唤醒词监听：全程麦模式下常驻，听到唤醒词才响应
+        try:
+            from firefly_app.backend import llm as _llm
+
+            _wcfg = _llm.load_config()
+            _wake = WakeListener(win.bridge)
+            _wake.start()
+            print(
+                f"[wake] 唤醒词={_wcfg.get('wake_word')!r} "
+                f"开启={_wcfg.get('wake_enabled')} "
+                f"模式={_wcfg.get('voice_mode')}",
+                flush=True,
+            )
+        except Exception as e:
+            print(f"[wake] 启动失败: {e}", flush=True)
+
+        # 开发用：FIREFLY_TEST_EMOTION=开心 时，启动 12 秒后广播一次情绪，
+        # 用来在没法聊天（比如账户欠费）时验证 3D 表情是否生效
+        try:
+            import os as _os
+
+            _emo = _os.environ.get("FIREFLY_TEST_EMOTION")
+            if _emo:
+                from PyQt6.QtCore import QTimer as _QTimer
+
+                _QTimer.singleShot(
+                    12000, lambda: ui_bus.broadcast("pet_motion", {"name": _emo})
+                )
+                print(f"[pet] 12 秒后注入测试情绪: {_emo}", flush=True)
+
+            # FIREFLY_TEST_CHAT=1：注入几条假消息，检查聊天区排版
+            if _os.environ.get("FIREFLY_TEST_CHAT") == "1":
+                from PyQt6.QtCore import QTimer as _QTimer
+
+                def _fake_chat():
+                    msgs = [
+                        "你喜欢干什么",
+                        "喜欢陪开拓者聊天，还在桌面上蹦来蹦去～",
+                        "你现在能做些什么",
+                        "开着呢，我能陪你聊天、提醒你喝水休息，还能帮你打开 QQ、搜索东西，都可以试试看。",
+                    ]
+                    for i, m in enumerate(msgs):
+                        who = "me" if i % 2 == 0 else "bot"
+                        ui_bus.broadcast(
+                            "user_text" if who == "me" else "llm_reply",
+                            {"text": m, "answer": m, "emotion": "开心", "skip_motion": True},
+                        )
+
+                _QTimer.singleShot(9000, _fake_chat)
+                print("[pet] 9 秒后注入测试消息", flush=True)
+
+            # FIREFLY_TEST_STAT=1：10 秒后强制显示余额浮层，方便截图核对样式
+            if _os.environ.get("FIREFLY_TEST_STAT") == "1":
+                from PyQt6.QtCore import QTimer as _QTimer
+
+                _QTimer.singleShot(10000, lambda: win.send_to_js("show_stat", {}))
+                print("[pet] 10 秒后显示余额浮层（测试）", flush=True)
+
+            # FIREFLY_SHOT_PET=1：14 秒后截桌宠窗口本身（浮层在这里）
+            if _os.environ.get("FIREFLY_SHOT_PET") == "1":
+
+                def _pet_shot():
+                    try:
+                        from firefly_app.paths import LOGS_DIR as _L
+
+                        win.grab().save(str(_L / "pet-shot.png"), "PNG")
+                        print("[shot] 桌宠截图已保存", flush=True)
+                    except Exception as e:
+                        print(f"[shot] 桌宠截图失败: {e}", flush=True)
+
+                _QTimer.singleShot(14000, _pet_shot)
+        except Exception as e:
+            print(f"[pet] 测试注入失败: {e}", flush=True)
 
         sys.exit(app.exec())
     except Exception as e:

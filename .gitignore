@@ -1,4 +1,4 @@
-# ===== 运行期产物 =====
+﻿# ===== 运行期产物 =====
 __pycache__/
 *.py[cod]
 *.log
@@ -36,3 +36,20 @@ _trash/
 
 # 诊断工具的产物
 tools/tts_probe/
+
+# 3D 模型（体积大、版权独立，只保留说明文件）
+assets/models3d/*
+!assets/models3d/README.md
+*.pmx
+*.vmd
+*.vrm
+
+# 运行时统计（每天生成）
+data/usage.json
+
+# 依赖目录
+node_modules/
+**/node_modules/
+
+# 离线补丁包
+dist/

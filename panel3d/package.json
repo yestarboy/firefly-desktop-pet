@@ -1,0 +1,18 @@
+{
+  "name": "firefly-panel3d",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Firefly 3D 角色渲染器（babylon-mmd），构建成单个 IIFE 供控制台面板加载",
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite build --watch"
+  },
+  "dependencies": {
+    "@babylonjs/core": "^9.15.0",
+    "babylon-mmd": "^1.3.0"
+  },
+  "devDependencies": {
+    "vite": "^5.4.0"
+  }
+}

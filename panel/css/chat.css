@@ -4,19 +4,105 @@
    ============================================================ */
 
 #page-chat{
+  position:relative;
   display:flex;
   flex-direction:column;
   height:calc(100vh - 200px);
   min-height:320px;
+
+  /* 背景：底层模糊铺满 + 上层原图 contain（完整显示、不拉伸） */
+  background-color:#06070c;
+  border-radius:14px;
+  overflow:hidden;
 }
 
+/* 底层：同一张图放大铺满 + 模糊，用来填 contain 留出的边 */
+#page-chat::before{
+  content:"";
+  position:absolute;
+  inset:-48px;
+  z-index:0;
+  background-image:url("/assets/images/panel-bg.png");
+  background-size:cover;
+  background-position:center center;
+  background-repeat:no-repeat;
+  filter:blur(26px) brightness(.5) saturate(1.1);
+  transform:scale(1.06);
+  pointer-events:none;
+}
+
+/* 上层：清晰原图，cover 铺满整个区域。
+   比例不符时只做裁切、绝不拉伸；竖屏时优先保住中间（人物与光柱所在）。 */
+#page-chat::after{
+  content:"";
+  position:absolute;
+  inset:0;
+  z-index:0;               /* 与 ::before 同级但后绘制，所以盖在模糊层之上 */
+  background-image:url("/assets/images/panel-bg.png");
+  background-size:cover;
+  background-position:center center;
+  background-repeat:no-repeat;
+  pointer-events:none;
+}
+
+/* ---- 3D 角色：铺满整个对话页，盖在气泡上面 ---- */
+.stage3d-wrap{
+  position:absolute;
+  inset:0;
+  z-index:2;             /* 人像在气泡之上 */
+  pointer-events:none;   /* 不挡聊天操作 */
+}
+
+.stage3d{
+  width:100%;
+  height:100%;
+  display:block;
+}
+
+.chat3d-tip{
+  position:absolute;
+  left:50%;
+  top:8px;
+  transform:translateX(-50%);
+  padding:6px 14px;
+  border-radius:20px;
+  font-size:12px;
+  color:var(--dim);
+  background:rgba(10,11,15,.75);
+  border:1px solid var(--line);
+  pointer-events:none;
+  white-space:nowrap;
+}
+
+/* ---- 消息区：从导航栏下方一直拉到输入框，气泡贴着底部 ---- */
 .chat-list{
-  flex:1;
+  position:absolute;
+  left:0;
+  right:0;
+  top:0;
+  bottom:74px;              /* 给输入框留位置 */
+  z-index:1;
   overflow-y:auto;
   display:flex;
   flex-direction:column;
+  justify-content:flex-end; /* 消息少时贴底，多了往上长 */
   gap:12px;
-  padding:4px 2px 12px;
+  padding:8px 6px 12px;
+
+  /* 隐藏滚动条，但保留滚动能力 */
+  scrollbar-width:none;        /* Firefox */
+  -ms-overflow-style:none;     /* 旧 Edge */
+}
+
+/* 弹性占位：消息少时贴在底部，多了自然往上长 */
+.chat-spacer{
+  flex:1 1 auto;
+  min-height:0;
+}
+
+.chat-list::-webkit-scrollbar{
+  width:0;
+  height:0;
 }
 
 .chat-row{ display:flex; }
@@ -50,10 +136,16 @@
 }
 
 .chat-input{
+  position:absolute;
+  left:0;
+  right:0;
+  bottom:0;
+  z-index:3;              /* 输入框永远在最上层，不能被模型挡住 */
   display:flex;
   gap:8px;
-  padding-top:12px;
+  padding:10px 2px 4px;
   border-top:1px solid var(--line);
+  background:linear-gradient(to top, rgba(10,11,15,.95), rgba(10,11,15,.0));
 }
 
 .chat-input input{ flex:1; }

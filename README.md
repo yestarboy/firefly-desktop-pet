@@ -6,7 +6,11 @@
 ![status](https://img.shields.io/badge/platform-Windows%2010%2F11-blue)
 ![python](https://img.shields.io/badge/python-3.10%2B-blue)
 
+> 最新改动见 [更新说明](docs/RELEASE-2026-11.md)
+
 <img width="432" height="315" alt="屏幕截图 2026-10-23 171541" src="https://github.com/user-attachments/assets/5508250c-a4f1-4cf0-b0d9-ec53dc19b122" />
+
+![对话页](docs/shot-chat.png)
 
 
 
@@ -15,11 +19,15 @@
 | 模块 | 说明 |
 |---|---|
 | **对话** | 线上 LLM（DeepSeek，OpenAI 兼容）或本地 Ollama，SSE 流式输出，首个字约 0.9s |
+| **上下文** | 自动带上最近 8 轮对话，能接住「刚才说到哪」 |
 | **语音合成** | 接入 GPT-SoVITS，可换成任意音色；逐句流水线合成，说完一句就开口 |
-| **语音输入** | 全局热键「按住说话」，或全程麦点一下录一句；funasr paraformer 识别，含热词与纠错 |
+| **语音输入** | 全局热键「按住说话」，或**全程麦常听 + 唤醒词**（默认「萤宝」，设置里可改）；funasr paraformer 识别，含热词与纠错 |
+| **本地技能** | 「打开QQ / 打开D盘 / 搜索xx / 音量加 / 下一首 / 截个图 / 锁屏」，白名单执行，不经过大模型 |
 | **动作表情** | LLM 用 `（动作名）` 驱动 Live2D 动作，只播放模型里真实存在的动作 |
 | **长期记忆** | SQLite 存储，按出现次数分级留存（1 天 / 7 天 / 30 天），自动去重与过期 |
+| **用量面板** | 鼠标悬停桌宠，显示账户余额与当天调用次数 |
 | **控制台** | 对话 / 设置 / 日志三个页签，改配置、换音色、看实时日志都不用改代码 |
+| **3D 面板** | 可选 Babylon.js + MMD（PMX）半身像，头发物理、表情 morph、呼吸待机 |
 
 ---
 

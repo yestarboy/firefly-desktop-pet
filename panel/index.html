@@ -8,6 +8,16 @@
 <link rel="stylesheet" href="css/settings.css" />
 <link rel="stylesheet" href="css/chat.css" />
 <link rel="stylesheet" href="css/logs.css" />
+
+<!-- 3D 角色：three.js 只能以 ES Module 方式加载，用 importmap 映射 -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
 </head>
 <body>
 
@@ -26,9 +36,15 @@
 
   <!-- ==================== 对话 ==================== -->
   <section class="tab-page" id="page-chat">
+    <div class="stage3d-wrap">
+      <canvas id="stage3d" class="stage3d"></canvas>
+      <div id="chat3dTip" class="chat3d-tip" hidden></div>
+    </div>
+
     <div id="chatList" class="chat-list"></div>
     <div class="chat-input">
       <input id="chatInput" placeholder="和萤宝说点什么…" />
+      <button id="chatVoice" class="ghost" title="语音输入">🎤</button>
       <button id="chatSend">发送</button>
     </div>
   </section>
@@ -101,7 +117,7 @@
       <div class="grid">
         <label>采集方式
           <select id="voice_mode">
-            <option value="always">全程麦（点 🎤 录一句）</option>
+            <option value="always">全程麦（一直听，听到唤醒词再执行）</option>
             <option value="hotkey">热键麦（按住说话）</option>
           </select>
         </label>
@@ -115,6 +131,21 @@
           <span class="inline">
             <select id="stt_mic"></select>
             <button class="ghost" id="refreshMic" type="button">刷新</button>
+          </span>
+        </label>
+        <label class="wide">界面提示
+          <span class="inline">
+            <input type="checkbox" id="show_hint" style="width:auto" />
+            在桌宠底部显示操作提示条（F2 开关输入框 · 💬 聊天 · 🎤 语音）
+          </span>
+        </label>
+        <label>唤醒词
+          <input id="wake_word" placeholder="萤宝" />
+        </label>
+        <label class="wide">唤醒词监听
+          <span class="inline">
+            <input type="checkbox" id="wake_enabled" style="width:auto" />
+            全程麦模式下常听，只有听到唤醒词才响应（比如「萤宝，打开QQ」）
           </span>
         </label>
       </div>

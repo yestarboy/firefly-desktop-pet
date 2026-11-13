@@ -53,18 +53,25 @@ CONFIG_PATH = WORKSPACE / "firefly_config.json"
 DEFAULT_FIXES = {
     "刘莹": "流萤", "刘颖": "流萤", "流瑩": "流萤", "流莹": "流萤",
     "流影": "流萤", "刘银": "流萤", "流英": "流萤", "刘英": "流萤",
+    # 唤醒词「萤宝」的常见误识别
+    "迎宝": "萤宝", "银宝": "萤宝", "莹宝": "萤宝", "赢宝": "萤宝",
+    "英宝": "萤宝", "应宝": "萤宝", "营宝": "萤宝",
 }
-DEFAULT_HOTWORDS = "流萤 星穹铁道"
+DEFAULT_HOTWORDS = "流萤 萤宝 星穹铁道"
 
 _model = None
 _model_name = ""
 _model_err = ""
 _loaded = threading.Event()
+_last_use = time.time()      # 最近一次被使用的时刻（空闲卸载用）
 
 # ---- 占位状态：任何一路录音都要先 claim，再在 finally 里 release ----
 _busy_lock = threading.Lock()
 _busy = {"who": None, "since": 0.0}
 STALE_AFTER = 8.0        # 占位超过这么久且没在录音，视为僵死，自动清理
+
+# /ptt/start 会置位它，让正在跑的 /listen 立刻让出麦克风
+_cancel_listen = threading.Event()
 
 # 按住说话会话
 _ptt = {"active": False, "buf": [], "stream": None, "t0": 0.0}
@@ -111,7 +118,10 @@ def load_stt_options():
                 hot = h.strip()
             f = cfg.get("stt_fixes")
             if isinstance(f, dict) and f:
-                fixes = {str(k): str(v) for k, v in f.items()}
+                # 合并而不是覆盖：配置里通常只写了几条，
+                # 覆盖会把内置的唤醒词纠错（迎宝→萤宝 等）全丢掉
+                fixes = dict(DEFAULT_FIXES)
+                fixes.update({str(k): str(v) for k, v in f.items()})
     except Exception:
         pass
     return hot, fixes
@@ -140,6 +150,15 @@ def load_model():
     global _model, _model_err, _model_name
     from funasr import AutoModel
 
+    # 限制 PyTorch 线程数：默认会用满所有核心，识别时把整机拖卡
+    try:
+        import torch
+
+        torch.set_num_threads(2)
+        log("PyTorch 线程数限制为 2")
+    except Exception:
+        pass
+
     for name in MODEL_CANDIDATES:
         try:
             log(f"加载模型: {name} (device={DEVICE})")
@@ -156,7 +175,82 @@ def load_model():
     _loaded.set()
 
 
+def unload_model(reason: str = ""):
+    """把模型从内存里放掉（下次请求再按需加载）
+
+    ASR 模型常驻要 0.8~1GB，长时间不用时占着很亏。
+    """
+    global _model, _model_name, _last_use
+    if _model is None:
+        return False
+    try:
+        _model = None
+        _model_name = ""
+        import gc
+
+        gc.collect()
+        log(f"模型已卸载{('（' + reason + '）') if reason else ''}")
+        return True
+    except Exception as e:
+        log(f"卸载失败: {e}")
+        return False
+
+
+def _idle_watcher():
+    """后台线程：空闲超过设定分钟数就卸载模型"""
+    while True:
+        time.sleep(30)
+        try:
+            if _model is None:
+                continue
+            limit = float(_idle_minutes())
+            if limit <= 0:
+                continue
+            idle = time.time() - _last_use
+            if idle < limit * 60:
+                continue
+            # 正在录音 / 被占用时不动
+            with _busy_lock:
+                busy = _busy["who"] is not None
+            if busy:
+                continue
+            log(f"空闲 {idle/60:.0f} 分钟，自动卸载模型")
+            unload_model("空闲")
+        except Exception:
+            pass
+
+
+def _idle_minutes() -> float:
+    try:
+        if CONFIG_PATH.exists():
+            cfg = json.loads(CONFIG_PATH.read_text(encoding="utf-8-sig"))
+            v = cfg.get("stt_idle_min")
+            if v is not None:
+                return float(v)
+    except Exception:
+        pass
+    return 10.0
+
+
+def touch():
+    """标记"刚刚被用过"（空闲卸载靠这个时间判断）"""
+    global _last_use
+    _last_use = time.time()
+
+
+def ensure_model(timeout: float = 90.0) -> bool:
+    """模型没加载就现加载（空闲卸载后第一次请求会走这里）"""
+    if _model is not None:
+        return True
+    _loaded.clear()
+    threading.Thread(target=load_model, daemon=True).start()
+    ok = _loaded.wait(timeout)
+    return bool(ok and _model is not None)
+
+
 def transcribe(audio):
+    global _last_use
+    _last_use = time.time()
     if _model is None or audio is None or len(audio) == 0:
         return ""
     if float(np.sqrt(np.mean(audio ** 2))) < 1e-4:
@@ -245,6 +339,11 @@ def record_utterance(mic=None, max_sec=15, silence_ms=700, start_timeout=6.0):
         last_data = time.time()
 
         while True:
+            # 被 /ptt/start 抢占：立刻放弃这次录音，把麦克风让出去
+            if _cancel_listen.is_set():
+                log("listen 被抢占，提前退出")
+                return None
+
             try:
                 d = q.get(timeout=0.5)
                 last_data = time.time()
@@ -286,8 +385,18 @@ def ptt_start(mic=None):
     if _ptt["active"]:
         return False, "已经在录音"
 
-    ok, who, age = _claim("ptt")
+    # 抢占：让正在常听的 /listen 立刻退出（否则热键永远抢不到麦克风）
+    _cancel_listen.set()
+    ok = False
+    who, age = "", 0.0
+    for _ in range(30):          # 最多等 3 秒
+        ok, who, age = _claim("ptt")
+        if ok:
+            break
+        time.sleep(0.1)
+
     if not ok:
+        _cancel_listen.clear()
         return False, f"{who} 正在占用（{age:.1f}s）"
 
     buf = []
@@ -434,10 +543,11 @@ class Handler(BaseHTTPRequestHandler):
             body = self.rfile.read(length) if length else b""
             qs = _query(self.path)
             mic = qs.get("mic", [None])[0]
+            touch()          # 任何一次请求都算"在用"，避免空闲误判
 
             # ---------------- 纯音频转文字 ----------------
             if self.path.startswith("/stt"):
-                if not _loaded.wait(120) or _model is None:
+                if not ensure_model() or _model is None:
                     return self._send(503, {"error": "模型未加载", "detail": _model_err})
                 audio, sr = sf.read(io.BytesIO(body), dtype="float32", always_2d=False)
                 if getattr(audio, "ndim", 1) > 1:
@@ -449,7 +559,7 @@ class Handler(BaseHTTPRequestHandler):
 
             # ---------------- 按住说话 ----------------
             if self.path.startswith("/ptt/start"):
-                if not _loaded.wait(120) or _model is None:
+                if not ensure_model() or _model is None:
                     return self._send(503, {"error": "模型未加载", "detail": _model_err})
                 ok, msg = ptt_start(mic)
                 return self._send(200 if ok else 409, {"ok": ok, "message": msg})
@@ -460,7 +570,7 @@ class Handler(BaseHTTPRequestHandler):
 
             # ---------------- 录一句（VAD） ----------------
             if self.path.startswith("/listen"):
-                if not _loaded.wait(120) or _model is None:
+                if not ensure_model() or _model is None:
                     return self._send(503, {"error": "模型未加载", "detail": _model_err})
 
                 ok, who, age = _claim("listen")
@@ -483,6 +593,7 @@ class Handler(BaseHTTPRequestHandler):
                     })
                 finally:
                     _release("listen")
+                    _cancel_listen.clear()   # 让下一次 /listen 正常开始
 
             return self._send(404, {"error": "not found"})
 
@@ -495,6 +606,7 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     log(f"端口 {PORT}，设备 {DEVICE}，麦克风 {MIC_INDEX or '默认'}")
     threading.Thread(target=load_model, daemon=True).start()
+    threading.Thread(target=_idle_watcher, daemon=True).start()
 
     srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     log(f"服务已启动: http://127.0.0.1:{PORT}/health")

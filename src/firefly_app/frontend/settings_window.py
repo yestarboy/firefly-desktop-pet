@@ -20,7 +20,7 @@ from PyQt6.QtCore import QObject, QUrl, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QVBoxLayout, QWidget
 from PyQt6.QtWebChannel import QWebChannel
-from PyQt6.QtWebEngineCore import QWebEngineSettings
+from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 
 from firefly_app.backend import llm, ui_bus
@@ -37,6 +37,7 @@ EDITABLE_KEYS = [
     "temperature", "max_tokens", "timeout",
     "system_prompt", "tts_ref_wav", "tts_speed",
     "stt_mic", "voice_mode", "voice_hotkey",
+    "show_hint", "wake_enabled", "wake_word",
 ]
 
 
@@ -49,6 +50,18 @@ class _Bridge(QObject):
         super().__init__()
         self.win = win
         self.sig_js.connect(win.run_js)
+
+    @pyqtSlot(result=bool)
+    def startVoice(self) -> bool:
+        """面板里的 🎤：复用桌宠那条录音→识别→对话的流程"""
+        try:
+            pb = getattr(self.win, "chat_bridge", None)
+            if pb is not None and hasattr(pb, "startVoice"):
+                pb.startVoice()
+                return True
+        except Exception as e:
+            print(f"[panel] 语音输入失败: {e}", flush=True)
+        return False
 
     # ------------------------------------------------ 读写配置
 
@@ -67,6 +80,33 @@ class _Bridge(QObject):
             return json.dumps({"ok": True}, ensure_ascii=False)
         except Exception as e:
             return json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False)
+
+    @pyqtSlot(result=str)
+    def motion3dPath(self) -> str:
+        """返回 assets/models3d/motions 里第一个 .vmd 文件名（没有就空串）"""
+        d = WORKSPACE_ROOT / "assets" / "models3d" / "motions"
+        try:
+            names = sorted(p.name for p in d.glob("*.vmd"))
+        except Exception:
+            names = []
+        return names[0] if names else ""
+
+    @pyqtSlot(result=str)
+    def model3dPath(self) -> str:
+        """返回 assets/models3d 里第一个可用的 .pmx 文件名（不带目录）"""
+        d = WORKSPACE_ROOT / "assets" / "models3d"
+        try:
+            names = [p.name for p in d.glob("*.pmx")]
+        except Exception:
+            names = []
+        if not names:
+            return ""
+        # 优先主模型，避免加载到 武器.pmx 这类附属文件
+        for kw in ("流萤", "firefly", "Firefly"):
+            for n in names:
+                if kw in n:
+                    return n
+        return sorted(names)[0]
 
     # ------------------------------------------------ 日志
 
@@ -231,6 +271,17 @@ class _Bridge(QObject):
         )
 
 
+class _PanelPage(QWebEnginePage):
+    """把面板页的 JS 控制台输出到 stdout，便于排查"""
+
+    def javaScriptConsoleMessage(self, level, message, lineNumber, sourceID):
+        try:
+            src = (sourceID or "").rsplit("/", 1)[-1]
+            print(f"[panel] {message} ({src}:{lineNumber})", flush=True)
+        except Exception:
+            pass
+
+
 class SettingsWindow(QWidget):
     # 跨线程安全的 JS 入口：工作线程只能 emit 信号，实际执行由主线程完成
     sig_js = pyqtSignal(str)
@@ -238,15 +289,32 @@ class SettingsWindow(QWidget):
     def __init__(self, server, chat_bridge=None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Firefly 控制台")
-        self.resize(940, 780)
-
-        # 窗口/任务栏图标
+        # FIREFLY_PANEL_SIZE=706x1000 可以指定窗口尺寸（调试自适应用）
+        _w, _h = 940, 780
         try:
-            icon_path = ICONS_DIR / "bitbug_favicon.ico"
+            import os as _os
+
+            _sz = _os.environ.get("FIREFLY_PANEL_SIZE", "")
+            if "x" in _sz:
+                _a, _b = _sz.lower().split("x", 1)
+                _w, _h = int(_a), int(_b)
+        except Exception:
+            pass
+        self.resize(_w, _h)
+
+        # 窗口/任务栏图标（优先多尺寸的 firefly.ico）
+        try:
+            icon_path = ICONS_DIR / "firefly.ico"
+            if not icon_path.exists():
+                icon_path = ICONS_DIR / "bitbug_favicon.ico"
             if icon_path.exists():
                 self.setWindowIcon(QIcon(str(icon_path)))
         except Exception:
             pass
+
+        # 任务栏身份：微软商店版 Python 在进程级锁死了 AppUserModelID，
+        # 只能在窗口级覆盖，否则任务栏一直显示 Python 图标。
+        self._taskbar_fixed = False
 
         # 桌宠那边的 Bridge，面板的聊天借它走同一套流程
         self.chat_bridge = chat_bridge
@@ -255,6 +323,9 @@ class SettingsWindow(QWidget):
         self.sig_js.connect(self._apply_js)
 
         self.view = QWebEngineView(self)
+        # 用自定义 Page 把面板的 JS 控制台转发到 stdout（最终落到 logs/pet.log），
+        # 否则 panel 里的报错完全看不到，像 3D 加载失败这种只能靠猜。
+        self.view.setPage(_PanelPage(self.view))
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.view)
@@ -271,11 +342,79 @@ class SettingsWindow(QWidget):
         # 页面拆到 panel/ 目录：panel/index.html + panel/css + panel/js
         self.view.load(QUrl(server.get_url("panel/index.html")))
 
+        # 调试/截图用：FIREFLY_PANEL_TAB=setting 打开时自动切页签，
+        # FIREFLY_PANEL_FOCUS="#card-stt" 再滚动到指定区块
+        try:
+            import os as _os
+
+            _tab = _os.environ.get("FIREFLY_PANEL_TAB", "")
+            _focus = _os.environ.get("FIREFLY_PANEL_FOCUS", "")
+            if _tab or _focus:
+                from PyQt6.QtCore import QTimer as _QTimer
+
+                _js = []
+                if _tab:
+                    _js.append(
+                        'document.querySelector(".tab[data-tab=%s]")?.click();' % _tab
+                    )
+                if _focus:
+                    _js.append(
+                        "document.querySelector(%s)?.scrollIntoView({block:'center'});"
+                        % repr(_focus)
+                    )
+                _QTimer.singleShot(4000, lambda: self.view.page().runJavaScript("".join(_js)))
+        except Exception:
+            pass
+
         # 注册到广播总线：桌宠那边产生的事件（llm_delta 等）这里也能收到
         ui_bus.register(self)
 
+        # 任务栏身份必须在窗口"显示之前"打上：
+        # 先强制创建原生窗口句柄（winId()），设置 AUMID，再让窗口出现。
+        # 放到 showEvent 里就晚了，任务栏已经按进程身份建好按钮。
+        try:
+            from firefly_app.frontend import win_taskbar
+
+            _icon = ICONS_DIR / "firefly.ico"
+            if not _icon.exists():
+                _icon = ICONS_DIR / "bitbug_favicon.ico"
+
+            _aumid = "Firefly.DesktopPet.1"
+            if _icon.exists():
+                win_taskbar.register_aumid_icon(_aumid, "Firefly 控制台", str(_icon))
+
+            _hwnd = int(self.winId())
+            self._taskbar_fixed = win_taskbar.set_window_aumid(_hwnd, _aumid)
+            print(
+                f"[panel] 任务栏身份: {'已设置' if self._taskbar_fixed else '设置失败（不影响使用）'}",
+                flush=True,
+            )
+        except Exception as e:
+            print(f"[panel] 任务栏身份设置异常: {e}", flush=True)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        # 窗口显示后任务栏才会重建按钮，这里再补一次确保生效
+        if not getattr(self, "_taskbar_fixed", False):
+            try:
+                from firefly_app.frontend import win_taskbar
+
+                self._taskbar_fixed = win_taskbar.set_window_aumid(
+                    int(self.winId()), "Firefly.DesktopPet.1"
+                )
+            except Exception:
+                pass
+
     def closeEvent(self, event):
         # 关窗口只是隐藏，不注销总线：重新打开时还能接着收到广播、保留聊天记录
+        # 面板打开时藏起来的是桌宠本体，这里把它放回来
+        try:
+            if getattr(self, "chat_bridge", None) is not None:
+                w = getattr(self.chat_bridge, "win", None)
+                if w is not None:
+                    w.show()
+        except Exception:
+            pass
         super().closeEvent(event)
 
     # ------------------------------------------------ 线程安全边界
@@ -355,6 +494,9 @@ class SettingsWindow(QWidget):
                 "mode": str(raw.get("voice_mode") or "always"),
                 "hotkey": str(raw.get("voice_hotkey") or "F9"),
             })
+
+            # 提示条开关也当场生效
+            ui_bus.broadcast("set_hint", {"show": bool(raw.get("show_hint", True))})
         except Exception:
             pass
         # 参考音色可能变了，让 voice 重新扫描
@@ -438,19 +580,45 @@ def _tail(path: Path, lines: int) -> str:
 def _read_raw() -> dict:
     if not CONFIG_PATH.exists():
         return {}
-    try:
-        return json.loads(CONFIG_PATH.read_text(encoding="utf-8-sig"))
-    except Exception:
-        return {}
+    # 写入方是"先写 .tmp 再替换"，替换的一瞬间读可能撞上，
+    # 短暂重试几次，避免读到空配置把设置覆盖掉
+    for _ in range(6):
+        try:
+            return json.loads(CONFIG_PATH.read_text(encoding="utf-8-sig"))
+        except OSError:
+            time.sleep(0.03)
+        except Exception:
+            return {}
+    return {}
 
 
 def write_raw(raw: dict) -> None:
-    """原子写入配置文件（先 .tmp 再替换）"""
+    """写配置文件：先写 .tmp 再替换（原子），失败时短暂重试。
+
+    Windows 上 os.replace 要删除目标文件，如果这一刻别处正开着读句柄，
+    会抛 WinError 5 拒绝访问。读取都很快，重试几乎总能成功。
+    """
     tmp = CONFIG_PATH.with_name(CONFIG_PATH.name + ".tmp")
     tmp.write_text(
         json.dumps(raw, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
-    tmp.replace(CONFIG_PATH)
+
+    last = None
+    for _ in range(12):
+        try:
+            tmp.replace(CONFIG_PATH)
+            return
+        except PermissionError as e:
+            last = e
+            time.sleep(0.05)
+
+    # 兜底：直接覆盖写（失去原子性，但至少能保存成功）
+    try:
+        CONFIG_PATH.write_text(tmp.read_text(encoding="utf-8"), encoding="utf-8")
+        tmp.unlink(missing_ok=True)
+        print("[config] 原子替换失败，已退回直接覆盖写入", flush=True)
+    except Exception:
+        raise last if last else RuntimeError("写入配置失败")
 
 
 def normalize_voice(raw: dict) -> dict:

@@ -47,14 +47,96 @@ DEFAULTS = {
     "memory_extract": True,     # 回复后自动提炼新记忆
     # 语音输入
     "stt_mic": "",              # 麦克风设备索引；空=系统默认
-    "voice_mode": "always",     # always=全程麦（点一下录一句） / hotkey=热键麦（按住说话）
+    "stt_idle_min": 10,         # 识别模型空闲多少分钟后卸载（0=常驻，省内存）
+    "voice_mode": "always",     # always=全程麦（常听，听到唤醒词再执行） / hotkey=热键麦（按住说话）
     "voice_hotkey": "F9",       # 热键名，见 firefly_app/backend/hotkey.py 的 VK_MAP
+    # 界面
+    "show_hint": True,          # 桌宠底部的操作提示条（F2 开关输入框 · 💬 聊天 · 🎤 语音）
+    # 唤醒词（仅"全程麦"模式生效）
+    "wake_enabled": True,       # 是否开启唤醒词监听
+    "wake_word": "萤宝",        # 听到这个词才开始处理后面的指令
     # Ollama 兜底（不想用线上时把 provider 改成 ollama）
     "ollama_url": "http://127.0.0.1:11434/api/chat",
     "ollama_model": "gemma3:4b",
 }
 
 _CONFIG_CACHE: Optional[dict] = None
+
+
+# ---------------------------------------------------------------- 用量 / 余额
+
+USAGE_PATH = WORKSPACE_ROOT / "data" / "usage.json"
+_usage_lock = __import__("threading").Lock()
+
+
+def _load_usage() -> dict:
+    try:
+        if USAGE_PATH.exists():
+            return json.loads(USAGE_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return {"date": "", "prompt": 0, "completion": 0, "calls": 0}
+
+
+def _record_usage(u: dict) -> None:
+    """累计当天 token 用量（流式响应的最后一帧会带 usage）"""
+    with _usage_lock:
+        d = _load_usage()
+        today = time.strftime("%Y-%m-%d")
+        if d.get("date") != today:
+            d = {"date": today, "prompt": 0, "completion": 0, "calls": 0}
+        d["prompt"] = int(d.get("prompt", 0)) + int(u.get("prompt_tokens") or 0)
+        d["completion"] = int(d.get("completion", 0)) + int(u.get("completion_tokens") or 0)
+        d["calls"] = int(d.get("calls", 0)) + 1
+        try:
+            USAGE_PATH.parent.mkdir(parents=True, exist_ok=True)
+            USAGE_PATH.write_text(json.dumps(d, ensure_ascii=False), encoding="utf-8")
+        except Exception:
+            pass
+
+
+def get_balance() -> dict:
+    """查询 DeepSeek 账户余额"""
+    cfg = load_config()
+    key = _clean_key(cfg.get("api_key"))
+    if not key:
+        return {"ok": False, "error": "未配置 Key"}
+
+    base = (cfg.get("base_url") or "https://api.deepseek.com").rstrip("/")
+    try:
+        r = requests.get(
+            base + "/user/balance",
+            headers={"Authorization": "Bearer " + key, "Accept": "application/json"},
+            timeout=10,
+        )
+        if r.status_code != 200:
+            return {"ok": False, "error": "HTTP %s" % r.status_code}
+        data = r.json()
+        infos = data.get("balance_infos") or []
+        total, currency = None, ""
+        if infos:
+            total = infos[0].get("total_balance")
+            currency = infos[0].get("currency", "")
+        return {
+            "ok": True,
+            "available": bool(data.get("is_available")),
+            "total": total,
+            "currency": currency,
+        }
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:60]}
+
+
+def usage_info() -> dict:
+    """当天用量 + 余额，给桌宠悬停面板用"""
+    d = _load_usage()
+    return {
+        "date": d.get("date", ""),
+        "prompt": int(d.get("prompt", 0)),
+        "completion": int(d.get("completion", 0)),
+        "calls": int(d.get("calls", 0)),
+        "balance": get_balance(),
+    }
 _FILE_CFG: dict = {}                 # 配置文件里原样的内容（用于诊断来源）
 _CONFLICTS: List[tuple] = []         # [(环境变量名, 字段, 环境变量值)] 文件和环境变量打架时记录
 
@@ -237,6 +319,8 @@ def _stream_openai(
         "model": cfg.get("model") or "deepseek-chat",
         "messages": _messages(user_text, history, extra_system, system_override),
         "stream": True,
+        # 让服务端在最后一帧带上 token 用量，用来统计"用了多少 token"
+        "stream_options": {"include_usage": True},
         "temperature": float(cfg.get("temperature") or 0.9),
         "max_tokens": int(cfg.get("max_tokens") or 512),
     }
@@ -281,6 +365,12 @@ def _stream_openai(
             except Exception:
                 continue
             choices = obj.get("choices") or []
+
+            # 最后一帧通常没有 choices，只有 usage
+            usage = obj.get("usage")
+            if usage:
+                _record_usage(usage)
+
             if not choices:
                 continue
             delta = choices[0].get("delta") or {}

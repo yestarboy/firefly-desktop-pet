@@ -23,6 +23,9 @@ const SettingsPanel = (function () {
     "stt_mic",
     "voice_mode",
     "voice_hotkey",
+    "show_hint",
+    "wake_word",
+    "wake_enabled",
   ];
 
   // ---- 热键捕获 ----
@@ -93,6 +96,10 @@ const SettingsPanel = (function () {
       if (!el) return;
       // stt_mic 是 select，选项要等设备列表回来才填，这里跳过
       if (k === "stt_mic") return;
+      if (el.type === "checkbox") {
+        el.checked = c[k] !== false;      // 缺省视为开启
+        return;
+      }
       if (c[k] !== undefined && c[k] !== null) el.value = c[k];
     });
 
@@ -158,7 +165,7 @@ const SettingsPanel = (function () {
       const el = $id(k);
       if (!el) return;
 
-      let v = el.value;
+      let v = el.type === "checkbox" ? el.checked : el.value;
 
       if (k === "temperature") v = parseFloat(v) || 0.9;
       else if (k === "tts_speed") v = parseFloat(v) || 1.0;

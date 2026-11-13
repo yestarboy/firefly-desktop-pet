@@ -17,6 +17,7 @@ Firefly 一键启动器（静默，无终端窗口）。
 
 import json
 import os
+import shutil
 import socket
 import subprocess
 import sys
@@ -86,10 +87,32 @@ def spawn(name: str, exe: Path, args, cwd: Path):
     return {"pid": p.pid, "name": name, "cmd": " ".join(cmd)}
 
 
+def heal_jieba_fast() -> bool:
+    """
+    GPT-SoVITS 的 jieba_fast 有时缺 dict.txt，TTS 一启动就崩：
+        FileNotFoundError: .../jieba_fast/dict.txt
+    启动前自动从 jieba 那边补一份，省得手动修。
+    """
+    site = GPT_DIR / "runtime" / "Lib" / "site-packages"
+    src = site / "jieba" / "dict.txt"
+    dst = site / "jieba_fast" / "dict.txt"
+    try:
+        if dst.exists() or not src.exists():
+            return False
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src, dst)
+        print("已修复 jieba_fast/dict.txt")
+        return True
+    except Exception as e:
+        print(f"修复 jieba_fast 失败: {e}")
+        return False
+
+
 def main() -> int:
     started = []
 
     # 1) GPT-SoVITS TTS
+    heal_jieba_fast()      # 缺 dict.txt 会让 TTS 启动即崩，先补
     if not GPT_PY.exists():
         print("未找到 GPT-SoVITS 运行时，跳过 TTS（桌宠会降级到系统语音）")
     elif port_open(9880):

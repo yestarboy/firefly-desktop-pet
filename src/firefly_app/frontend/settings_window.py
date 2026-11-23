@@ -102,6 +102,55 @@ class _Bridge(QObject):
             return json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False)
 
     @pyqtSlot(str)
+    def evolveStart(self, goal: str):
+        """自主迭代：开分支 → 自己改 → 验证 → 成功留分支 / 失败回滚"""
+        if getattr(self, "_evolving", False):
+            return
+        self._evolving = True
+
+        def _run():
+            from firefly_app.backend import evolve, ui_bus
+
+            def emit(kind, text):
+                ui_bus.broadcast("evolve_event", {"kind": kind, "text": text})
+
+            try:
+                result = evolve.run_iteration(goal or "", emit=emit)
+                if result.get("ok"):
+                    ui_bus.broadcast(
+                        "evolve_event",
+                        {
+                            "kind": "done",
+                            "text": result.get("summary", ""),
+                            "branch": result.get("branch", ""),
+                            "diff": result.get("diff", ""),
+                            "report": result.get("report", ""),
+                        },
+                    )
+                else:
+                    ui_bus.broadcast(
+                        "evolve_event",
+                        {"kind": "fail", "text": result.get("error", "未知错误")},
+                    )
+            except Exception as e:
+                ui_bus.broadcast("evolve_event", {"kind": "fail", "text": str(e)})
+            finally:
+                self._evolving = False
+
+        import threading
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    @pyqtSlot(result=str)
+    def evolveState(self) -> str:
+        try:
+            from firefly_app.backend import evolve
+
+            return json.dumps(evolve.status(), ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
+
+    @pyqtSlot(str)
     def wsAsk(self, text: str):
         """跑一轮 AI 工具循环（后台线程，过程通过事件推到前端）"""
         if self._ws_busy:

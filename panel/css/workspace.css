@@ -182,3 +182,29 @@
 .ws-log .line.reply{ color:#9df0b8; }
 .ws-log .line.error{ color:#ff8b8b; }
 .ws-log .line.dim{ color:var(--dim); }
+
+/* ---- 自主迭代 ---- */
+.ws-evolve{
+  display:flex;
+  gap:8px;
+  align-items:center;
+}
+
+.ws-evolve input{ flex:1; min-width:0; }
+
+.ws-evolve-state{
+  padding:8px 12px;
+  border-radius:10px;
+  font-size:13px;
+  line-height:1.7;
+  background:rgba(91,140,255,.12);
+  border:1px solid rgba(91,140,255,.35);
+  color:#cfe0ff;
+  white-space:pre-wrap;
+}
+
+.ws-evolve-state.fail{
+  background:rgba(255,90,90,.12);
+  border-color:rgba(255,90,90,.35);
+  color:#ffd0d0;
+}

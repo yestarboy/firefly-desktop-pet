@@ -169,6 +169,55 @@ const WorkspacePanel = (function () {
     });
   }
 
+  function evolve() {
+    const goal = ($("wsGoal").value || "").trim();
+    if (!bridge || !bridge.evolveStart) return;
+
+    const state = $("wsEvolveState");
+    state.hidden = false;
+    state.classList.remove("fail");
+    state.textContent = goal ? "目标：" + goal + "\n准备中…" : "没指定目标，让她自己找改进点…";
+
+    $("wsEvolveBtn").disabled = true;
+    logLine(goal ? "开始自动迭代：" + goal : "开始自动迭代（自主选题）", "cmd");
+    bridge.evolveStart(goal);
+  }
+
+  function onEvolveEvent(payload) {
+    const kind = payload && payload.kind;
+    const text = (payload && payload.text) || "";
+    const state = $("wsEvolveState");
+
+    if (kind === "evolve_log") {
+      logLine(text, "dim");
+    } else if (kind === "evolve_propose") {
+      state.hidden = false;
+      state.textContent = text;
+      logLine("[选题] " + text.split("\n")[0], "cmd");
+    } else if (kind === "done") {
+      $("wsEvolveBtn").disabled = false;
+      state.hidden = false;
+      state.classList.remove("fail");
+      state.textContent =
+        "✅ 完成，改动在分支 " +
+        (payload.branch || "") +
+        "\n" +
+        text +
+        "\n" +
+        (payload.diff || "") +
+        "\n报告：" +
+        (payload.report || "");
+      logLine("迭代完成：" + (payload.branch || ""), "reply");
+      list(curDir);
+    } else if (kind === "fail") {
+      $("wsEvolveBtn").disabled = false;
+      state.hidden = false;
+      state.classList.add("fail");
+      state.textContent = "❌ 失败（已自动回滚）：" + text;
+      logLine("迭代失败：" + text, "error");
+    }
+  }
+
   function ask() {
     const text = ($("wsAsk").value || "").trim();
     if (!text) return;
@@ -182,6 +231,10 @@ const WorkspacePanel = (function () {
   // ---------------------------------------------------------------- 事件
 
   function onEvent(event, payload) {
+    if (event === "evolve_event") {
+      onEvolveEvent(payload || {});
+      return;
+    }
     if (event !== "ws_event") return;
     const kind = payload && payload.kind;
     const text = (payload && payload.text) || "";
@@ -224,6 +277,15 @@ const WorkspacePanel = (function () {
     $("wsSave").addEventListener("click", save);
     $("wsRunBtn").addEventListener("click", runCommand);
     $("wsAskBtn").addEventListener("click", ask);
+
+    const evoBtn = $("wsEvolveBtn");
+    if (evoBtn) evoBtn.addEventListener("click", evolve);
+    const goalEl = $("wsGoal");
+    if (goalEl) {
+      goalEl.addEventListener("keydown", function (e) {
+        if (e.key === "Enter") evolve();
+      });
+    }
 
     $("wsCmd").addEventListener("keydown", function (e) {
       if (e.key === "Enter") runCommand();

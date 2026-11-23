@@ -49,3 +49,7 @@ node_modules/
 
 # 离线补丁包
 dist/
+
+# 自主迭代的快照与进行中标记（本地状态）
+data/evolve_checkpoint.json
+data/evolve_inprogress.json

@@ -114,8 +114,18 @@ class _Bridge(QObject):
             def emit(kind, text):
                 ui_bus.broadcast("evolve_event", {"kind": kind, "text": text})
 
+            def notify(text):
+                # 让桌宠开口：面板状态 + 语音播报，做到"迭代前先跟你说"
+                try:
+                    pb = getattr(self.win, "chat_bridge", None)
+                    if pb is not None and hasattr(pb, "say"):
+                        pb.say(text)
+                except Exception:
+                    pass
+                ui_bus.broadcast("evolve_event", {"kind": "notice", "text": text})
+
             try:
-                result = evolve.run_iteration(goal or "", emit=emit)
+                result = evolve.run_iteration(goal or "", emit=emit, notify=notify)
                 if result.get("ok"):
                     ui_bus.broadcast(
                         "evolve_event",

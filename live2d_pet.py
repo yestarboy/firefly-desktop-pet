@@ -552,6 +552,24 @@ class Bridge(QObject):
         """
         print(f"[pet] 语音模式: {'开' if on else '关'}", flush=True)
 
+    @pyqtSlot(str)
+    def say(self, text: str):
+        """让桌宠开口说一句（面板通知事件用）"""
+        s = (text or "").strip()
+        if not s:
+            return
+        try:
+            from firefly_app.backend.voice import _infer_emotion
+
+            emo = _infer_emotion(s)
+        except Exception:
+            emo = "中立"
+        try:
+            _tts_say(s, emotion=emo, interrupt=True)
+            ui_bus.broadcast("llm_reply", {"answer": s, "emotion": emo, "skip_motion": True})
+        except Exception as e:
+            print(f"[pet] 播报失败: {e}", flush=True)
+
     @pyqtSlot()
     def startVoice(self):
         """点 🎤 的行为
@@ -936,6 +954,24 @@ def main():
             print(f"[soul] {soul.CREED}", flush=True)
         except Exception:
             pass
+
+        # 上次自主迭代如果中途闪退，这里自动回到迭代前的快照
+        # （只回滚代码，data/memory.db 不在版本库里，记忆不会丢）
+        try:
+            from firefly_app.backend import evolve as _evolve
+
+            _rec = _evolve.recover_if_needed()
+            if _rec:
+                if _rec.get("restored"):
+                    print(
+                        f"[evolve] 上次迭代未正常结束，已回滚到 {_rec.get('sha')}"
+                        f"（{_rec.get('time')}，目标：{_rec.get('goal')}）",
+                        flush=True,
+                    )
+                else:
+                    print(f"[evolve] 回滚失败: {_rec.get('reason')}", flush=True)
+        except Exception as e:
+            print(f"[evolve] 启动检查失败: {e}", flush=True)
 
         # 任务栏图标：不设置 AppUserModelID 的话，Windows 会把窗口
         # 归到 python.exe 名下、显示 Python 图标，而不是我们的图标。

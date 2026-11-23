@@ -20,6 +20,12 @@ from typing import Callable, Dict, Optional
 from firefly_app.backend import workspace
 
 REPORT_DIR = workspace.DEFAULT_ROOT / "logs" / "evolve"
+DATA_DIR = workspace.DEFAULT_ROOT / "data"
+
+# 迭代前的快照（只保留一份，每次覆盖）
+CHECKPOINT = DATA_DIR / "evolve_checkpoint.json"
+# 迭代进行中的标记：启动时若发现它还在，说明上次异常退出，需要回滚
+INPROGRESS = DATA_DIR / "evolve_inprogress.json"
 
 PROPOSE_PROMPT = """你在一个个人项目里担任「自主改进的工程师」。
 
@@ -67,6 +73,74 @@ def _current_branch() -> str:
 def _changed_files() -> list[str]:
     raw = _git("-c", "core.quotepath=false", "status", "--porcelain")
     return [ln[3:].strip() for ln in raw.splitlines() if len(ln) > 3]
+
+
+# ---------------------------------------------------------------- 快照 / 回滚
+
+
+def _snapshot() -> Dict:
+    """记下"你提问那一刻"的版本；只保留一份，下次迭代覆盖"""
+    meta = {
+        "sha": _git("rev-parse", "HEAD"),
+        "branch": _current_branch(),
+        "time": time.strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    CHECKPOINT.write_text(json.dumps(meta, ensure_ascii=False, indent=1), encoding="utf-8")
+    return meta
+
+
+def _mark_started(goal: str, meta: Dict) -> None:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    INPROGRESS.write_text(
+        json.dumps({"goal": goal, "checkpoint": meta, "start": time.time()}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+def _clear_started() -> None:
+    try:
+        if INPROGRESS.exists():
+            INPROGRESS.unlink()
+    except Exception:
+        pass
+
+
+def _restore(meta: Dict) -> None:
+    """强制回到快照。
+
+    只动版本库里的文件；data/memory.db、logs/、usage.json 都是 ignored，
+    所以**记忆不会跟着回滚**——这正是设计意图。
+    """
+    if meta.get("branch"):
+        _git("checkout", "-f", meta["branch"])
+    _git("reset", "--hard", meta["sha"])
+    _git("clean", "-fd")
+
+
+def recover_if_needed() -> Optional[Dict]:
+    """启动时调用：上次迭代没正常结束（闪退/断电）就回滚到快照"""
+    if not INPROGRESS.exists():
+        return None
+    try:
+        data = json.loads(INPROGRESS.read_text(encoding="utf-8"))
+    except Exception:
+        data = {}
+    meta = data.get("checkpoint") or {}
+    if not meta.get("sha"):
+        _clear_started()
+        return {"restored": False, "reason": "快照信息缺失"}
+    try:
+        _restore(meta)
+        _clear_started()
+        return {
+            "restored": True,
+            "goal": data.get("goal", ""),
+            "sha": meta.get("sha", "")[:7],
+            "time": meta.get("time", ""),
+        }
+    except Exception as e:
+        return {"restored": False, "reason": str(e)}
 
 
 def verify_changes() -> Dict:
@@ -119,6 +193,7 @@ def verify_changes() -> Dict:
 def run_iteration(
     goal: str = "",
     emit: Optional[Callable[[str, str], None]] = None,
+    notify: Optional[Callable[[str], None]] = None,
 ) -> Dict:
     """跑一轮自主迭代；返回 {ok, goal, branch, summary, report, diff}"""
 
@@ -129,12 +204,27 @@ def run_iteration(
             except Exception:
                 pass
 
+    def _notify(text: str):
+        """开口告诉用户（面板提示 + 语音）"""
+        _emit("evolve_notice", text)
+        if notify:
+            try:
+                notify(text)
+            except Exception:
+                pass
+
     if not _is_clean():
         return {"ok": False, "error": "工作区有未提交的改动，先处理干净再自动迭代"}
 
     origin_branch = _current_branch()
     stamp = time.strftime("%Y%m%d-%H%M%S")
     branch = f"auto/iter-{stamp}"
+
+    # 0) 先留快照，再开口告诉用户，然后才动手
+    meta = _snapshot()
+    _mark_started(goal, meta)
+    _emit("evolve_log", f"已保存快照 {meta['sha'][:7]}（{meta['time']}，只保留这一份）")
+    _notify(f"我要开始迭代了。先存好了当前版本 {meta['sha'][:7]}，改坏了我就退回来。")
 
     _emit("evolve_log", f"基线分支：{origin_branch}")
 
@@ -196,8 +286,16 @@ def run_iteration(
         )
         diff = _git("-c", "core.quotepath=false", "show", "--stat", "--oneline", "HEAD")
 
+        # 6) 成功：清掉"进行中"标记，并回到原来的分支（改动留在 auto 分支）
+        _clear_started()
+        try:
+            _git("checkout", origin_branch)
+        except Exception as e:
+            _emit("evolve_log", f"切回 {origin_branch} 失败（改动仍在分支 {branch}）：{e}")
+
         report = _write_report(stamp, goal, branch, summary, v["output"], diff)
         _emit("evolve_ok", branch)
+        _notify(f"迭代完成啦，改动都在分支 {branch} 上，验证也过了。")
         return {
             "ok": True,
             "goal": goal,
@@ -208,16 +306,17 @@ def run_iteration(
         }
 
     except Exception as e:
-        # 6) 失败：回滚这次的所有改动，回到原分支
-        _emit("evolve_log", f"失败：{e}，正在回滚…")
+        # 7) 失败：退回快照（只回滚代码，记忆不受影响），再通知用户
+        _emit("evolve_log", f"失败：{e}，正在回滚到快照…")
         try:
-            _git("checkout", "--", ".")
-            _git("clean", "-fd")
-            _git("checkout", origin_branch)
+            _restore(meta)
             _git("branch", "-D", branch)
+            _clear_started()
+            _emit("evolve_log", f"已回滚到 {meta['sha'][:7]}")
         except Exception as e2:
             _emit("evolve_log", f"回滚时又出错：{e2}")
         report = _write_report(stamp, goal, branch, f"失败：{e}", "", "", failed=True)
+        _notify(f"这次没改成，已经退回到 {meta['sha'][:7]} 了，记忆没动。")
         return {"ok": False, "error": str(e), "report": str(report)}
 
 
@@ -258,9 +357,17 @@ def _write_report(
 
 def status() -> Dict:
     try:
+        cp = None
+        if CHECKPOINT.exists():
+            try:
+                cp = json.loads(CHECKPOINT.read_text(encoding="utf-8"))
+            except Exception:
+                cp = None
         return {
             "branch": _current_branch(),
             "clean": _is_clean(),
+            "checkpoint": cp,
+            "running": INPROGRESS.exists(),
             "reports": sorted(p.name for p in REPORT_DIR.glob("*.md"))[-5:] if REPORT_DIR.exists() else [],
         }
     except Exception as e:

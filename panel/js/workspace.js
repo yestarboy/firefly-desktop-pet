@@ -190,6 +190,10 @@ const WorkspacePanel = (function () {
 
     if (kind === "evolve_log") {
       logLine(text, "dim");
+    } else if (kind === "evolve_notice") {
+      state.hidden = false;
+      state.textContent = "🗣 " + text;
+      logLine("萤宝：" + text, "reply");
     } else if (kind === "evolve_propose") {
       state.hidden = false;
       state.textContent = text;

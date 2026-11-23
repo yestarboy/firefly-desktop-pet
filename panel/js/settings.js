@@ -180,9 +180,76 @@ const SettingsPanel = (function () {
 
   // ---------- 与后端交互 ----------
 
+  // ---------------------------------------------------------------- 记忆库
+
+  function renderMemory(info) {
+    const box = $id("memoryBox");
+    if (!box) return;
+    if (!info || info.error) {
+      box.textContent = "读取失败：" + ((info && info.error) || "未知");
+      return;
+    }
+
+    const pct = Math.min(100, Math.max(0, info.percent || 0));
+    const cls = info.full ? "full" : info.near_full ? "warn" : "";
+
+    box.innerHTML = "";
+    const line1 = document.createElement("div");
+    line1.textContent =
+      "目录：" + info.dir + "\n" +
+      "占用：" + info.size_mb + " MB / " + info.limit_mb + " MB（" + pct + "%）\n" +
+      "记忆条数：" + info.alive;
+    box.appendChild(line1);
+
+    const bar = document.createElement("div");
+    bar.className = "memory-bar " + cls;
+    const fill = document.createElement("i");
+    fill.style.width = pct + "%";
+    bar.appendChild(fill);
+    box.appendChild(bar);
+
+    if (info.near_full) {
+      const warn = document.createElement("div");
+      warn.className = cls;
+      warn.textContent = info.full ? "⚠ 记忆库已满" : "⚠ 快满了，建议清理";
+      box.appendChild(warn);
+    }
+  }
+
+  function loadMemory() {
+    if (!bridge || !bridge.memoryInfo) return;
+    bridge.memoryInfo(function (raw) {
+      try {
+        renderMemory(JSON.parse(raw));
+      } catch (e) {
+        /* 忽略 */
+      }
+    });
+  }
+
+  function cleanMemory() {
+    if (!bridge || !bridge.memoryCleanup) return;
+    setStatus("清理中…");
+    bridge.memoryCleanup(function (raw) {
+      let d = {};
+      try {
+        d = JSON.parse(raw);
+      } catch (e) {
+        return;
+      }
+      if (d.ok) {
+        setStatus("已清理 " + (d.removed || 0) + " 条，释放 " + (d.freed_mb || 0) + " MB", "ok");
+      } else {
+        setStatus("清理失败：" + (d.error || "未知"), "err");
+      }
+      loadMemory();
+    });
+  }
+
   function reload() {
     if (!bridge) return;
     setStatus("读取中…");
+    loadMemory();
     bridge.loadConfig(function (raw) {
       try {
         const state = JSON.parse(raw);
@@ -239,6 +306,11 @@ const SettingsPanel = (function () {
 
     $id("save").addEventListener("click", save);
     $id("reload").addEventListener("click", reload);
+
+    const mc = $id("memoryClean");
+    if (mc) mc.addEventListener("click", cleanMemory);
+    const mr = $id("memoryRefresh");
+    if (mr) mr.addEventListener("click", loadMemory);
 
     $id("toggleKey").addEventListener("click", function () {
       const inp = $id("api_key");

@@ -101,6 +101,25 @@ class _Bridge(QObject):
         except Exception as e:
             return json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False)
 
+    @pyqtSlot(result=str)
+    def memoryCleanup(self) -> str:
+        """清理记忆库（删过期 + VACUUM 回收空间）"""
+        try:
+            from firefly_app.backend import memory
+
+            return json.dumps(memory.trim(), ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False)
+
+    @pyqtSlot(result=str)
+    def memoryInfo(self) -> str:
+        try:
+            from firefly_app.backend import memory
+
+            return json.dumps(memory.storage_info(), ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False)
+
     @pyqtSlot(str)
     def evolveStart(self, goal: str):
         """自主迭代：开分支 → 自己改 → 验证 → 成功留分支 / 失败回滚"""
@@ -621,6 +640,18 @@ class SettingsWindow(QWidget):
             "配置文件": str(CONFIG_PATH),
             "音色目录": str(VOICE_DIR),
         }
+        # 记忆库：独立文件夹 + 当前占用
+        try:
+            from firefly_app.backend import memory
+
+            mi = memory.storage_info()
+            st["记忆库目录"] = mi["dir"]
+            st["记忆库占用"] = (
+                f"{mi['size_mb']} MB / {mi['limit_mb']:.0f} MB"
+                f"（{mi['percent']:.0f}%，{mi['alive']} 条记忆）"
+            )
+        except Exception as e:
+            st["记忆库"] = f"读取失败：{e}"
         try:
             import requests
 

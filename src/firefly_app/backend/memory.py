@@ -26,8 +26,60 @@ from typing import List, Optional
 from firefly_app.paths import ROOT
 
 WORKSPACE_ROOT = ROOT
-DB_DIR = WORKSPACE_ROOT / "data"
+LEGACY_DB = WORKSPACE_ROOT / "data" / "memory.db"
+
+
+def _memory_dir() -> Path:
+    """记忆库专用目录：默认 data/memory，可用配置 memory_dir 覆盖"""
+    try:
+        from firefly_app.backend import llm
+
+        cfg = llm.load_config()
+        d = cfg.get("memory_dir")
+        if isinstance(d, str) and d.strip():
+            p = Path(d).expanduser()
+            return p if p.is_absolute() else WORKSPACE_ROOT / p
+    except Exception:
+        pass
+    return WORKSPACE_ROOT / "data" / "memory"
+
+
+DB_DIR = _memory_dir()
 DB_PATH = DB_DIR / "memory.db"
+WARN_STAMP = DB_DIR / ".last_warn"
+
+
+def _limits() -> tuple[float, float]:
+    """(容量上限 MB, 提醒阈值百分比)；可用环境变量临时覆盖上限做测试"""
+    try:
+        import os
+
+        env_mb = os.environ.get("FIREFLY_MEMORY_MAX_MB")
+        from firefly_app.backend import llm
+
+        cfg = llm.load_config()
+        mb = float(env_mb) if env_mb else float(cfg.get("memory_max_mb") or 50)
+        pct = float(cfg.get("memory_warn_percent") or 85)
+        return max(0.001, mb), max(50.0, min(99.0, pct))
+    except Exception:
+        return 50.0, 85.0
+
+
+def _migrate_legacy() -> None:
+    """老版本把库放在 data/memory.db，这里搬到独立目录一次"""
+    try:
+        if LEGACY_DB.exists() and not DB_PATH.exists():
+            DB_DIR.mkdir(parents=True, exist_ok=True)
+            import shutil
+
+            shutil.move(str(LEGACY_DB), str(DB_PATH))
+            for suffix in ("-wal", "-shm", "-journal"):
+                old = Path(str(LEGACY_DB) + suffix)
+                if old.exists():
+                    shutil.move(str(old), str(DB_PATH) + suffix)
+            print(f"[memory] 记忆库已迁移到 {DB_PATH}", flush=True)
+    except Exception as e:
+        print(f"[memory] 记忆库迁移失败（继续用旧位置）: {e}", flush=True)
 
 # 出现次数 -> 存活天数
 TIER_TABLE = [(4, 30), (2, 7), (1, 1)]
@@ -102,6 +154,8 @@ def _db():
 
 
 def init_db() -> None:
+    _migrate_legacy()
+    DB_DIR.mkdir(parents=True, exist_ok=True)
     with _db() as con:
         con.execute(
             """
@@ -245,6 +299,117 @@ def stats() -> dict:
             )
         }
     return {"total": total, "alive": alive, "by_tier_days": by_tier, "db": str(DB_PATH)}
+
+
+def storage_info() -> dict:
+    """记忆库占用了多少空间、离上限还有多远"""
+    limit_mb, warn_pct = _limits()
+
+    size = 0
+    try:
+        if DB_PATH.exists():
+            size += DB_PATH.stat().st_size
+        for suffix in ("-wal", "-shm", "-journal"):
+            p = Path(str(DB_PATH) + suffix)
+            if p.exists():
+                size += p.stat().st_size
+    except Exception:
+        pass
+
+    size_mb = size / (1024 * 1024)
+    percent = (size_mb / limit_mb * 100.0) if limit_mb > 0 else 0.0
+
+    alive = 0
+    try:
+        info = stats()
+        alive = info.get("alive", 0)
+    except Exception:
+        pass
+
+    return {
+        "dir": str(DB_DIR),
+        "db": str(DB_PATH),
+        "size_bytes": size,
+        "size_mb": round(size_mb, 2),
+        "limit_mb": limit_mb,
+        "percent": round(percent, 1),
+        "warn_percent": warn_pct,
+        "near_full": percent >= warn_pct,
+        "full": percent >= 100.0,
+        "alive": alive,
+    }
+
+
+def check_and_maybe_warn(cooldown_hours: float = 12.0) -> Optional[dict]:
+    """容量接近上限时返回提醒文案（同一提醒冷却 cooldown_hours 小时）
+
+    返回 None 表示不用提醒。
+    """
+    info = storage_info()
+    if not info["near_full"]:
+        return None
+
+    # 冷却：避免每轮对话都念一遍
+    try:
+        if WARN_STAMP.exists():
+            last = float(WARN_STAMP.read_text(encoding="utf-8").strip() or 0)
+            if time.time() - last < cooldown_hours * 3600:
+                return None
+    except Exception:
+        pass
+
+    try:
+        WARN_STAMP.parent.mkdir(parents=True, exist_ok=True)
+        WARN_STAMP.write_text(str(time.time()), encoding="utf-8")
+    except Exception:
+        pass
+
+    level = "满了" if info["full"] else "快满了"
+    limit_txt = f"{info['limit_mb']:.0f}" if info["limit_mb"] >= 10 else f"{info['limit_mb']:.1f}"
+    text = (
+        f"主人，记忆库{level}——现在 {info['size_mb']} MB / 上限 {limit_txt} MB"
+        f"（{info['percent']:.0f}%），要不要我帮你清理一些旧的？"
+    )
+    info["message"] = text
+    return info
+
+
+def trim(keep_recent_days: float = 0) -> dict:
+    """清理记忆库：先删过期，必要时再删最旧的一批，最后 VACUUM 回收空间
+
+    keep_recent_days > 0 时，额外只保留最近这么多天的记忆。
+    返回 {freed_mb, before_mb, after_mb, removed}
+    """
+    before = storage_info()["size_bytes"]
+    removed = 0
+    try:
+        with _db() as con:
+            cur = con.execute("DELETE FROM memories WHERE expires_at <= ?", (time.time(),))
+            removed += cur.rowcount or 0
+
+            if keep_recent_days > 0:
+                cutoff = time.time() - keep_recent_days * 86400
+                cur = con.execute(
+                    "DELETE FROM memories WHERE last_seen < ?", (cutoff,)
+                )
+                removed += cur.rowcount or 0
+
+            con.commit()
+            try:
+                con.execute("VACUUM")
+            except Exception:
+                pass
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+    after = storage_info()["size_bytes"]
+    return {
+        "ok": True,
+        "removed": removed,
+        "before_mb": round(before / 1048576, 2),
+        "after_mb": round(after / 1048576, 2),
+        "freed_mb": round(max(0, before - after) / 1048576, 2),
+    }
 
 
 # ---------------------------------------------------------------- 自动学习

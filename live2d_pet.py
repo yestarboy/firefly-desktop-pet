@@ -117,6 +117,28 @@ def _pick_speaker():
 _speak = _pick_speaker()
 
 
+def _memory_warn_tick():
+    """记忆库快满时提醒一次（内部有 12 小时冷却）"""
+    try:
+        from firefly_app.backend import memory
+
+        info = memory.check_and_maybe_warn()
+        if not info:
+            return
+        msg = info.get("message", "记忆库快满了")
+        print(f"[memory] {msg}", flush=True)
+        try:
+            _tts_say(msg, emotion="难过", interrupt=False)
+        except Exception:
+            pass
+        ui_bus.broadcast("memory_warn", info)
+        ui_bus.broadcast(
+            "llm_reply", {"answer": msg, "emotion": "难过", "skip_motion": True}
+        )
+    except Exception as e:
+        print(f"[memory] 容量检查失败: {e}", flush=True)
+
+
 def _tts_say(text: str, emotion: str = "中立", interrupt: bool = True):
     """
     兼容不同降级实现：voice.speak 支持 emotion/interrupt，
@@ -926,6 +948,8 @@ class Bridge(QObject):
                 from firefly_app.backend import memory
 
                 memory.learn_async(q, ans)
+                # 等记忆落盘后检查一次容量，快满就提醒（有冷却，不会每轮都念）
+                threading.Timer(4.0, _memory_warn_tick).start()
             except Exception as e:
                 print(f"[memory] 提炼启动失败: {e}", flush=True)
         except Exception as e:
@@ -1027,6 +1051,13 @@ def main():
             gone = memory.purge_expired()
             if gone:
                 print(f"[memory] 清理过期记忆 {gone} 条", flush=True)
+
+            _mi = memory.storage_info()
+            print(
+                f"[memory] 记忆库 {_mi['dir']} 占用 {_mi['size_mb']} MB / "
+                f"{_mi['limit_mb']:.0f} MB（{_mi['percent']:.0f}%）",
+                flush=True,
+            )
         except Exception as e:
             print(f"[memory] 初始化失败: {e}", flush=True)
 
@@ -1193,11 +1224,10 @@ def main():
         # 用来在没法聊天（比如账户欠费）时验证 3D 表情是否生效
         try:
             import os as _os
+            from PyQt6.QtCore import QTimer as _QTimer
 
             _emo = _os.environ.get("FIREFLY_TEST_EMOTION")
             if _emo:
-                from PyQt6.QtCore import QTimer as _QTimer
-
                 _QTimer.singleShot(
                     12000, lambda: ui_bus.broadcast("pet_motion", {"name": _emo})
                 )
@@ -1246,6 +1276,14 @@ def main():
                 _QTimer.singleShot(14000, _pet_shot)
         except Exception as e:
             print(f"[pet] 测试注入失败: {e}", flush=True)
+
+        # 开机 12 秒后检查一次记忆库容量（此时窗口和事件循环都已就绪）
+        try:
+            from PyQt6.QtCore import QTimer as _QTimer2
+
+            _QTimer2.singleShot(12000, _memory_warn_tick)
+        except Exception as e:
+            print(f"[memory] 容量定时检查注册失败: {e}", flush=True)
 
         sys.exit(app.exec())
     except Exception as e:

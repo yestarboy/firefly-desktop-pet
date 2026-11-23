@@ -64,3 +64,34 @@
 .inline select{ flex:1; }
 
 .inline button{ flex:none; }
+
+/* ---- 记忆库状态 ---- */
+.memory-box{
+  padding:10px 12px;
+  border-radius:10px;
+  background:rgba(255,255,255,.04);
+  border:1px solid var(--line);
+  font-size:13px;
+  line-height:1.8;
+  color:var(--text);
+  white-space:pre-wrap;
+}
+
+.memory-box .warn{ color:#ffc46b; }
+.memory-box .full{ color:#ff8b8b; }
+
+.memory-bar{
+  height:6px;
+  border-radius:3px;
+  background:rgba(255,255,255,.10);
+  overflow:hidden;
+  margin:6px 0 4px;
+}
+.memory-bar > i{
+  display:block;
+  height:100%;
+  width:0;
+  background:var(--accent);
+}
+.memory-bar.warn > i{ background:#ffc46b; }
+.memory-bar.full > i{ background:#ff6b6b; }

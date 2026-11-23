@@ -45,6 +45,10 @@ DEFAULTS = {
     # 记忆
     "memory_enabled": True,     # 回复前注入长期记忆
     "memory_extract": True,     # 回复后自动提炼新记忆
+    # 记忆库存储（独立文件夹 + 容量提醒）
+    "memory_dir": "",           # 留空 = data/memory
+    "memory_max_mb": 50,        # 容量上限（MB）
+    "memory_warn_percent": 85,  # 用到这个百分比就提醒
     # 语音输入
     "stt_mic": "",              # 麦克风设备索引；空=系统默认
     "stt_idle_min": 10,         # 识别模型空闲多少分钟后卸载（0=常驻，省内存）

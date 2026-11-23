@@ -221,6 +221,18 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "search_memory",
+            "description": "在长期记忆（含已压缩归档的旧记忆）里按关键词查找用户说过的事。",
+            "parameters": {
+                "type": "object",
+                "properties": {"query": {"type": "string", "description": "关键词"}},
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "run_command",
             "description": "在工作区根目录执行一条命令并返回输出（超时 120 秒）。",
             "parameters": {
@@ -345,6 +357,15 @@ def agent_ask(
             elif name == "run_command":
                 result = run_command(args.get("command", ""))
                 summary = f"exit={result.get('code')} ({result.get('seconds')}s)" if "code" in result else result.get("error", "")
+            elif name == "search_memory":
+                try:
+                    from firefly_app.backend import memory
+
+                    result = memory.search_all(args.get("query", ""), limit=6)
+                    summary = f"在线 {len(result.get('live', []))} 条 / 归档 {len(result.get('archived', []))} 条"
+                except Exception as e:
+                    result = {"ok": False, "error": str(e)}
+                    summary = str(e)
             else:
                 result = {"ok": False, "error": f"未知工具 {name}"}
                 summary = "未知工具"

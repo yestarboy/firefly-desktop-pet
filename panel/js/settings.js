@@ -198,7 +198,9 @@ const SettingsPanel = (function () {
     line1.textContent =
       "目录：" + info.dir + "\n" +
       "占用：" + info.size_mb + " MB / " + info.limit_mb + " MB（" + pct + "%）\n" +
-      "记忆条数：" + info.alive;
+      "上限来源：磁盘剩余 " + info.free_mb + " MB × 比例\n" +
+      "记忆条数：" + info.alive + "　归档：" + (info.archives || 0) + " 个\n" +
+      "压缩阈值：" + info.compress_threshold_mb + " MB";
     box.appendChild(line1);
 
     const bar = document.createElement("div");
@@ -224,6 +226,28 @@ const SettingsPanel = (function () {
       } catch (e) {
         /* 忽略 */
       }
+    });
+  }
+
+  function compressMemory() {
+    if (!bridge || !bridge.memoryCompress) return;
+    setStatus("压缩中…");
+    bridge.memoryCompress(function (raw) {
+      let d = {};
+      try {
+        d = JSON.parse(raw);
+      } catch (e) {
+        return;
+      }
+      if (d.ok) {
+        setStatus(
+          "已压缩 " + d.count + " 条 → " + d.file + "（" + d.before_mb + " → " + d.after_mb + " MB）",
+          "ok"
+        );
+      } else {
+        setStatus("压缩失败：" + (d.reason || d.error || "未知"), "err");
+      }
+      loadMemory();
     });
   }
 
@@ -309,6 +333,8 @@ const SettingsPanel = (function () {
 
     const mc = $id("memoryClean");
     if (mc) mc.addEventListener("click", cleanMemory);
+    const mz = $id("memoryCompress");
+    if (mz) mz.addEventListener("click", compressMemory);
     const mr = $id("memoryRefresh");
     if (mr) mr.addEventListener("click", loadMemory);
 

@@ -779,7 +779,7 @@ class Bridge(QObject):
         try:
             from firefly_app.backend import memory
 
-            mem_block = memory.prompt_block()
+            mem_block = memory.prompt_block(query=q)
         except Exception as e:
             print(f"[memory] 读取记忆失败: {e}", flush=True)
 

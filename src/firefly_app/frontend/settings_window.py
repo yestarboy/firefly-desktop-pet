@@ -112,6 +112,16 @@ class _Bridge(QObject):
             return json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False)
 
     @pyqtSlot(result=str)
+    def memoryCompress(self) -> str:
+        """立即把最旧的一半记忆压缩归档"""
+        try:
+            from firefly_app.backend import memory
+
+            return json.dumps(memory.archive_old(force=True), ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False)
+
+    @pyqtSlot(result=str)
     def memoryInfo(self) -> str:
         try:
             from firefly_app.backend import memory

@@ -47,22 +47,66 @@ def _memory_dir() -> Path:
 DB_DIR = _memory_dir()
 DB_PATH = DB_DIR / "memory.db"
 WARN_STAMP = DB_DIR / ".last_warn"
+ARCHIVE_DIR = DB_DIR / "archives"
+
+_last_compress_check = 0.0
+
+
+def disk_free_mb() -> float:
+    """记忆库所在磁盘的剩余空间（MB）"""
+    try:
+        import shutil
+
+        base = DB_DIR if DB_DIR.exists() else WORKSPACE_ROOT
+        return shutil.disk_usage(str(base)).free / 1048576.0
+    except Exception:
+        return 0.0
 
 
 def _limits() -> tuple[float, float]:
-    """(容量上限 MB, 提醒阈值百分比)；可用环境变量临时覆盖上限做测试"""
+    """(容量上限 MB, 提醒阈值百分比)
+
+    上限默认按磁盘剩余算：free × memory_limit_ratio（默认 2%）；
+    仍然可以设 memory_max_mb 作为绝对上限（0 = 只用磁盘比例）。
+    环境变量 FIREFLY_MEMORY_MAX_MB 可临时覆盖（调试用）。
+    """
     try:
         import os
 
-        env_mb = os.environ.get("FIREFLY_MEMORY_MAX_MB")
         from firefly_app.backend import llm
 
         cfg = llm.load_config()
-        mb = float(env_mb) if env_mb else float(cfg.get("memory_max_mb") or 50)
+
+        env_mb = os.environ.get("FIREFLY_MEMORY_MAX_MB")
+        if env_mb:
+            mb = float(env_mb)
+            pct = float(cfg.get("memory_warn_percent") or 85)
+            return max(0.001, mb), max(50.0, min(99.0, pct))
+
+        ratio = float(cfg.get("memory_limit_ratio") or 0.02)
+        cap = float(cfg.get("memory_max_mb") or 0)
+
+        free = disk_free_mb()
+        auto = free * ratio if free > 0 else 0.0
+        limit = auto if cap <= 0 else (min(auto, cap) if auto > 0 else cap)
+        limit = max(10.0, limit)          # 再小也给 10MB 余地
+
         pct = float(cfg.get("memory_warn_percent") or 85)
-        return max(0.001, mb), max(50.0, min(99.0, pct))
+        return limit, max(50.0, min(99.0, pct))
     except Exception:
         return 50.0, 85.0
+
+
+def compress_threshold_mb() -> float:
+    """压缩阈值：配的 GB 数与"上限的 85%"取小，保证小上限时也能自动压缩"""
+    try:
+        from firefly_app.backend import llm
+
+        gb = float(llm.load_config().get("memory_compress_gb") or 10)
+    except Exception:
+        gb = 10.0
+    limit_mb, _ = _limits()
+    return max(5.0, min(gb * 1024.0, limit_mb * 0.85))
 
 
 def _migrate_legacy() -> None:
@@ -241,6 +285,16 @@ def remember(content: str, kind: str = "fact", now: Optional[float] = None) -> d
         return {"inserted": True, "hits": 1, "id": int(cur.lastrowid)}
 
 
+def remember_then_check(content: str, kind: str = "fact") -> dict:
+    """写入一条记忆，并顺手检查是否该压缩归档（60 秒最多查一次）"""
+    r = remember(content, kind)
+    try:
+        maybe_auto_compress()
+    except Exception:
+        pass
+    return r
+
+
 # ---------------------------------------------------------------- 读取
 
 def purge_expired(now: Optional[float] = None) -> int:
@@ -268,18 +322,32 @@ def recall(query: str = "", limit: int = 8, now: Optional[float] = None) -> List
         return [dict(r) for r in con.execute(sql, args)]
 
 
-def prompt_block(limit: int = 8) -> str:
-    """拼成注入系统提示的一段文字"""
+def prompt_block(limit: int = 8, query: str = "") -> str:
+    """拼成注入系统提示的一段文字（带 query 时会顺带查压缩包）"""
     rows = recall(limit=limit)
-    if not rows:
-        return ""
-    lines = [
-        "[长期记忆]",
-        "这些是你已经知道的关于用户的信息。用户问起相关的事情时，要自然地用上它们，",
-        "不要生硬背诵，也不要说“根据我的记忆”这类话：",
-    ]
-    for r in rows:
-        lines.append(f"- {r['content']}")
+    lines = []
+    if rows:
+        lines = [
+            "[长期记忆]",
+            "这些是你已经知道的关于用户的信息。用户问起相关的事情时，要自然地用上它们，",
+            "不要生硬背诵，也不要说“根据我的记忆”这类话：",
+        ]
+        for r in rows:
+            lines.append(f"- {r['content']}")
+
+    # 压缩包里如果有相关内容，也一并给模型看（相当于"翻旧档案"）
+    if query:
+        try:
+            hits = search_archives(query, limit=3)
+        except Exception:
+            hits = []
+        if hits:
+            if not lines:
+                lines = ["[长期记忆]"]
+            lines.append("[归档记忆] 以下是更早以前归档下来的相关内容：")
+            for h in hits:
+                lines.append(f"- {h['content']}（{h['date']}）")
+
     return "\n".join(lines)
 
 
@@ -331,12 +399,15 @@ def storage_info() -> dict:
         "db": str(DB_PATH),
         "size_bytes": size,
         "size_mb": round(size_mb, 2),
-        "limit_mb": limit_mb,
+        "limit_mb": round(limit_mb, 1),
         "percent": round(percent, 1),
         "warn_percent": warn_pct,
         "near_full": percent >= warn_pct,
         "full": percent >= 100.0,
         "alive": alive,
+        "free_mb": round(disk_free_mb(), 1),
+        "compress_threshold_mb": round(compress_threshold_mb(), 1),
+        "archives": len(list_archives()),
     }
 
 
@@ -412,6 +483,183 @@ def trim(keep_recent_days: float = 0) -> dict:
     }
 
 
+# ---------------------------------------------------------------- 归档压缩
+
+
+def _fmt_date(ts: float) -> str:
+    return time.strftime("%Y-%m-%d", time.localtime(ts))
+
+
+def list_archives() -> list:
+    """列出所有压缩包（按时间倒序）"""
+    out = []
+    if not ARCHIVE_DIR.exists():
+        return out
+    for p in sorted(ARCHIVE_DIR.glob("*.json.gz"), reverse=True):
+        try:
+            size = p.stat().st_size
+        except Exception:
+            size = 0
+        name = p.name[:-8]      # 去掉 .json.gz
+        start, _, end = name.partition("~")
+        out.append(
+            {
+                "file": p.name,
+                "path": str(p),
+                "start": start,
+                "end": end or start,
+                "size_kb": round(size / 1024, 1),
+            }
+        )
+    return out
+
+
+def archive_old(force: bool = False) -> dict:
+    """把最旧的一半记忆压成一个归档文件，文件名是内容的日期范围
+
+    触发条件：库体积 >= compress_threshold_mb()（或 force=True）。
+    压缩后从库里删掉这些行并 VACUUM，库体积回落。
+    """
+    info = storage_info()
+    threshold = compress_threshold_mb()
+    if not force and info["size_mb"] < threshold:
+        return {
+            "ok": False,
+            "reason": f"还没到压缩阈值（{info['size_mb']} / {threshold:.1f} MB）",
+        }
+
+    with _db() as con:
+        rows = [
+            dict(r)
+            for r in con.execute(
+                "SELECT * FROM memories ORDER BY last_seen ASC"
+            )
+        ]
+    if not rows:
+        return {"ok": False, "reason": "记忆库是空的"}
+
+    take = max(1, len(rows) // 2)
+    picked = rows[:take]
+
+    import gzip
+
+    ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
+    start = _fmt_date(picked[0]["last_seen"])
+    end = _fmt_date(picked[-1]["last_seen"])
+    name = f"{start}~{end}" if start != end else start
+
+    target = ARCHIVE_DIR / f"{name}.json.gz"
+    n = 2
+    while target.exists():
+        target = ARCHIVE_DIR / f"{name}-{n}.json.gz"
+        n += 1
+
+    payload = {
+        "range": [start, end],
+        "count": len(picked),
+        "archived_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "items": [
+            {
+                "content": r["content"],
+                "kind": r["kind"],
+                "hits": r["hits"],
+                "first_seen": r["first_seen"],
+                "last_seen": r["last_seen"],
+            }
+            for r in picked
+        ],
+    }
+    with gzip.open(str(target), "wt", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False)
+
+    before = storage_info()["size_mb"]
+    ids = [r["id"] for r in picked]
+    with _db() as con:
+        con.executemany("DELETE FROM memories WHERE id = ?", [(i,) for i in ids])
+        con.commit()
+        try:
+            con.execute("VACUUM")
+        except Exception:
+            pass
+    after = storage_info()["size_mb"]
+
+    return {
+        "ok": True,
+        "file": target.name,
+        "path": str(target),
+        "count": len(picked),
+        "start": start,
+        "end": end,
+        "before_mb": before,
+        "after_mb": after,
+    }
+
+
+def search_archives(query: str, limit: int = 5) -> list:
+    """在压缩包里按关键词找记忆（读完就丢，不占常驻内存）"""
+    q = (query or "").strip()
+    if not q or not ARCHIVE_DIR.exists():
+        return []
+
+    hits = []
+    for p in sorted(ARCHIVE_DIR.glob("*.json.gz"), reverse=True):
+        try:
+            import gzip
+
+            with gzip.open(str(p), "rt", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            continue
+        for item in data.get("items", []):
+            if q in item.get("content", ""):
+                hits.append(
+                    {
+                        "content": item.get("content", ""),
+                        "date": _fmt_date(item.get("last_seen", 0)),
+                        "archive": p.name,
+                    }
+                )
+                if len(hits) >= limit:
+                    return hits
+    return hits
+
+
+def search_all(query: str, limit: int = 8) -> dict:
+    """同时查在线记忆与压缩包——AI 据此"读取"历史"""
+    live = []
+    try:
+        for r in recall(query=query, limit=limit):
+            live.append({"content": r["content"], "date": _fmt_date(r["last_seen"])})
+    except Exception:
+        pass
+    archived = search_archives(query, limit=limit)
+    return {"live": live, "archived": archived}
+
+
+def maybe_auto_compress() -> Optional[dict]:
+    """写记忆后顺手检查一次（60 秒最多查一次，避免频繁读磁盘）"""
+    global _last_compress_check
+    now = time.time()
+    if now - _last_compress_check < 60:
+        return None
+    _last_compress_check = now
+    try:
+        info = storage_info()
+        if info["size_mb"] < compress_threshold_mb():
+            return None
+        result = archive_old(force=True)
+        if result.get("ok"):
+            print(
+                f"[memory] 已压缩旧记忆 -> {result['file']}"
+                f"（{result['count']} 条，{result['before_mb']} -> {result['after_mb']} MB）",
+                flush=True,
+            )
+        return result
+    except Exception as e:
+        print(f"[memory] 自动压缩失败: {e}", flush=True)
+        return None
+
+
 # ---------------------------------------------------------------- 自动学习
 
 _EXTRACT_SYSTEM = """你是记忆整理器，只做一件事：从一轮对话中提取关于【用户本人】的长期有效信息。
@@ -458,7 +706,7 @@ def _learn_worker(question: str, answer: str) -> None:
         print(f"[memory] 解析出 {len(items)} 条: {items}", flush=True)
 
         for it in items:
-            r = remember(it["content"], it["kind"])
+            r = remember_then_check(it["content"], it["kind"])
             flag = "新增" if r["inserted"] else "命中"
             print(
                 f"[memory] {flag} #{r['id']} hits={r['hits']} "

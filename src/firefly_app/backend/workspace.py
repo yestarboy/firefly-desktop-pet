@@ -244,6 +244,18 @@ SYSTEM = """你是桌面宠物「萤宝」里的编程助手，当前在一个�
 """
 
 
+def _system_prompt() -> str:
+    """工作区助手的系统提示：同样以最底层的「爱」为总纲"""
+    text = SYSTEM.format(root=_root().as_posix())
+    try:
+        from firefly_app.backend import soul
+
+        text = soul.creed_block() + "\n\n" + text
+    except Exception:
+        pass
+    return text
+
+
 def _endpoint() -> str:
     cfg = llm.load_config()
     base = (cfg.get("base_url") or "https://api.deepseek.com").rstrip("/")
@@ -273,7 +285,7 @@ def agent_ask(
         return {"ok": False, "error": "还没配置 API Key"}
 
     messages: List[dict] = [
-        {"role": "system", "content": SYSTEM.format(root=_root().as_posix())},
+        {"role": "system", "content": _system_prompt()},
         {"role": "user", "content": question},
     ]
     headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}

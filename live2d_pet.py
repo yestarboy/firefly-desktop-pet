@@ -929,6 +929,14 @@ def main():
 
         _log_line("==== live2d_pet start ====")
 
+        # 最底层的那句话：每次启动都念一遍，提醒自己为什么写这个项目
+        try:
+            from firefly_app.backend import soul
+
+            print(f"[soul] {soul.CREED}", flush=True)
+        except Exception:
+            pass
+
         # 任务栏图标：不设置 AppUserModelID 的话，Windows 会把窗口
         # 归到 python.exe 名下、显示 Python 图标，而不是我们的图标。
         # 注意：AUMID 还必须在注册表里登记图标，否则任务栏会回退到 exe 图标。

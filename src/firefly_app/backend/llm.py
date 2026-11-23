@@ -291,7 +291,17 @@ def _messages(
         # 内部任务（记忆提炼等）需要干净的提示，不能带角色人设
         system = str(system_override)
     else:
+        # 最底层的「爱」准则排在最前面：它高于人设，也高于任何临时指令
+        try:
+            from firefly_app.backend import soul
+
+            creed = soul.creed_block()
+        except Exception:
+            creed = ""
+
         system = str(cfg.get("system_prompt") or "")
+        if creed:
+            system = (creed + "\n\n" + system).strip()
         if extra_system:
             # 长期记忆等附加上下文并进同一条 system，避免出现多条 system 被忽略
             system = (system + "\n\n" + extra_system).strip()

@@ -58,6 +58,9 @@
   // 后端广播事件（桌宠窗口也有同名函数，两边共用一套事件名）
   window.__pet_on_py_event = function (event, payload) {
     ChatPanel.onEvent(event, payload);
+    try {
+      if (typeof WorkspacePanel !== "undefined") WorkspacePanel.onEvent(event, payload);
+    } catch (e) {}
 
     // 3D 角色也订阅同一批事件（tts_start / tts_end 用来驱动口型）
     if (window.BabylonMMDViewer) {
@@ -100,6 +103,11 @@
     SideNav.init();
     SettingsPanel.bind(bridge);
     ChatPanel.bind(bridge);
+    try {
+      if (typeof WorkspacePanel !== "undefined") WorkspacePanel.bind(bridge);
+    } catch (e) {
+      console.error("[ws] 工作区初始化失败:", e);
+    }
     LogsPanel.bind(bridge);
     SettingsPanel.reload();
 

@@ -1,0 +1,184 @@
+/* ============================================================
+   workspace.css —— 对话页里的「工作区」子页面
+   ============================================================ */
+
+/* ---- 子切换（对话 / 工作区） ---- */
+.chat-subnav{
+  position:absolute;
+  top:8px;
+  left:8px;
+  z-index:5;
+  display:flex;
+  gap:6px;
+  padding:4px;
+  border-radius:12px;
+  background:rgba(12,13,18,.72);
+  border:1px solid var(--line);
+  backdrop-filter:blur(8px);
+}
+
+.chat-subnav .sub-tab{
+  border:0;
+  background:transparent;
+  color:var(--dim);
+  font-size:13px;
+  padding:5px 14px;
+  border-radius:9px;
+  cursor:pointer;
+}
+
+.chat-subnav .sub-tab.active{
+  background:var(--accent);
+  color:#fff;
+}
+
+/* ---- 工作区整体 ---- */
+.workspace{
+  position:absolute;
+  inset:0;
+  z-index:4;                 /* 盖住 3D 画布 */
+  display:flex;
+  gap:10px;
+  padding:44px 0 0;          /* 顶部让出子切换条 */
+  box-sizing:border-box;
+  /* 半透明黑底：让面板从 3D 人像里"浮"出来，但不至于全黑 */
+  background:rgba(8,9,13,.78);
+  backdrop-filter:blur(6px);
+  border-radius:14px;
+}
+
+/* hidden 必须真的隐藏（类里的 display:flex 会盖掉 UA 的 [hidden]） */
+.workspace[hidden]{ display:none !important; }
+
+/* ---- 左侧文件树 ---- */
+.ws-side{
+  width:230px;
+  flex:none;
+  display:flex;
+  flex-direction:column;
+  min-height:0;
+  background:rgba(12,13,18,.82);
+  border:1px solid var(--line);
+  border-radius:12px;
+  overflow:hidden;
+}
+
+.ws-side-head{
+  display:flex;
+  align-items:center;
+  gap:6px;
+  padding:8px 10px;
+  border-bottom:1px solid var(--line);
+}
+
+.ws-root{
+  flex:1;
+  font-size:12px;
+  color:var(--dim);
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+
+.ws-tree{
+  flex:1;
+  overflow:auto;
+  padding:6px;
+  font-size:13px;
+}
+
+.ws-item{
+  display:flex;
+  align-items:center;
+  gap:6px;
+  padding:5px 8px;
+  border-radius:7px;
+  cursor:pointer;
+  color:var(--text);
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+
+.ws-item:hover{ background:rgba(255,255,255,.07); }
+.ws-item.active{ background:rgba(91,140,255,.30); }
+
+.ws-item .ico{ opacity:.8; }
+
+/* ---- 右侧主区 ---- */
+.ws-main{
+  flex:1;
+  min-width:0;
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+  background:rgba(12,13,18,.82);
+  border:1px solid var(--line);
+  border-radius:12px;
+  padding:10px;
+  overflow:auto;
+}
+
+.ws-file-head,
+.ws-cmd,
+.ws-ai{
+  display:flex;
+  gap:8px;
+  align-items:center;
+}
+
+.ws-file-head input,
+.ws-cmd input,
+.ws-ai input{
+  flex:1;
+  min-width:0;
+}
+
+.ws-editor{
+  width:100%;
+  min-height:220px;
+  flex:1;
+  resize:vertical;
+  background:rgba(8,9,13,.85);
+  color:#dfe6f2;
+  border:1px solid var(--line);
+  border-radius:10px;
+  padding:10px 12px;
+  font-family:Consolas, "Cascadia Mono", monospace;
+  font-size:13px;
+  line-height:1.6;
+  tab-size:4;
+}
+
+.ws-out{
+  margin:0;
+  max-height:180px;
+  overflow:auto;
+  background:rgba(8,9,13,.85);
+  border:1px solid var(--line);
+  border-radius:10px;
+  padding:10px 12px;
+  font-family:Consolas, "Cascadia Mono", monospace;
+  font-size:12px;
+  color:#c9d4e6;
+  white-space:pre-wrap;
+}
+
+.ws-log{
+  flex:1;
+  min-height:90px;
+  overflow:auto;
+  background:rgba(8,9,13,.65);
+  border:1px solid var(--line);
+  border-radius:10px;
+  padding:10px 12px;
+  font-size:13px;
+  line-height:1.7;
+  color:#c9d4e6;
+}
+
+.ws-log .line{ margin-bottom:4px; }
+.ws-log .line.cmd{ color:#7fb0ff; }
+.ws-log .line.reply{ color:#9df0b8; }
+.ws-log .line.error{ color:#ff8b8b; }
+.ws-log .line.dim{ color:var(--dim); }

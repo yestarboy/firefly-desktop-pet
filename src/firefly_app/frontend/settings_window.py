@@ -50,6 +50,94 @@ class _Bridge(QObject):
         super().__init__()
         self.win = win
         self.sig_js.connect(win.run_js)
+        self._ws_busy = False
+
+    # ------------------------------------------------ 工作区
+
+    @pyqtSlot(result=str)
+    def wsRoot(self) -> str:
+        try:
+            from firefly_app.backend import workspace
+
+            return json.dumps(
+                {"ok": True, "root": workspace._root().as_posix()}, ensure_ascii=False
+            )
+        except Exception as e:
+            return json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False)
+
+    @pyqtSlot(str, result=str)
+    def wsList(self, rel: str) -> str:
+        try:
+            from firefly_app.backend import workspace
+
+            return json.dumps(workspace.list_dir(rel), ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False)
+
+    @pyqtSlot(str, result=str)
+    def wsRead(self, rel: str) -> str:
+        try:
+            from firefly_app.backend import workspace
+
+            return json.dumps(workspace.read_file(rel), ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False)
+
+    @pyqtSlot(str, str, result=str)
+    def wsWrite(self, rel: str, content: str) -> str:
+        try:
+            from firefly_app.backend import workspace
+
+            return json.dumps(workspace.write_file(rel, content), ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False)
+
+    @pyqtSlot(str, result=str)
+    def wsRun(self, command: str) -> str:
+        try:
+            from firefly_app.backend import workspace
+
+            return json.dumps(workspace.run_command(command), ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False)
+
+    @pyqtSlot(str)
+    def wsAsk(self, text: str):
+        """跑一轮 AI 工具循环（后台线程，过程通过事件推到前端）"""
+        if self._ws_busy:
+            return
+        q = (text or "").strip()
+        if not q:
+            return
+        self._ws_busy = True
+
+        def _run():
+            from firefly_app.backend import ui_bus, workspace
+
+            def emit(kind, msg):
+                ui_bus.broadcast("ws_event", {"kind": kind, "text": msg})
+
+            ui_bus.broadcast("ws_event", {"kind": "start", "text": q})
+            try:
+                result = workspace.agent_ask(q, emit=emit)
+                if result.get("ok"):
+                    ui_bus.broadcast(
+                        "ws_event", {"kind": "reply", "text": result.get("answer", "")}
+                    )
+                else:
+                    ui_bus.broadcast(
+                        "ws_event",
+                        {"kind": "error", "text": result.get("error", "未知错误")},
+                    )
+            except Exception as e:
+                ui_bus.broadcast("ws_event", {"kind": "error", "text": str(e)})
+            finally:
+                ui_bus.broadcast("ws_event", {"kind": "done", "text": ""})
+                self._ws_busy = False
+
+        import threading
+
+        threading.Thread(target=_run, daemon=True).start()
 
     @pyqtSlot(result=bool)
     def startVoice(self) -> bool:
@@ -349,7 +437,9 @@ class SettingsWindow(QWidget):
 
             _tab = _os.environ.get("FIREFLY_PANEL_TAB", "")
             _focus = _os.environ.get("FIREFLY_PANEL_FOCUS", "")
-            if _tab or _focus:
+            _sub = _os.environ.get("FIREFLY_PANEL_SUB", "")
+            _extra = _os.environ.get("FIREFLY_PANEL_JS", "")
+            if _tab or _focus or _sub or _extra:
                 from PyQt6.QtCore import QTimer as _QTimer
 
                 _js = []
@@ -357,11 +447,20 @@ class SettingsWindow(QWidget):
                     _js.append(
                         'document.querySelector(".tab[data-tab=%s]")?.click();' % _tab
                     )
+                if _sub:
+                    # 对话页里的子切换（chat / work）
+                    _js.append(
+                        'document.querySelector(".chat-subnav .sub-tab[data-sub=%s]")?.click();'
+                        % _sub
+                    )
                 if _focus:
                     _js.append(
                         "document.querySelector(%s)?.scrollIntoView({block:'center'});"
                         % repr(_focus)
                     )
+                if _extra:
+                    # 调试用：直接执行传入的 JS（例如自动点开某个文件）
+                    _js.append(_extra)
                 _QTimer.singleShot(4000, lambda: self.view.page().runJavaScript("".join(_js)))
         except Exception:
             pass

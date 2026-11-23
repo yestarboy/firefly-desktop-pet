@@ -8,6 +8,7 @@
 <link rel="stylesheet" href="css/settings.css" />
 <link rel="stylesheet" href="css/chat.css" />
 <link rel="stylesheet" href="css/logs.css" />
+<link rel="stylesheet" href="css/workspace.css" />
 
 <!-- 3D 角色：three.js 只能以 ES Module 方式加载，用 importmap 映射 -->
 <script type="importmap">
@@ -41,11 +42,52 @@
       <div id="chat3dTip" class="chat3d-tip" hidden></div>
     </div>
 
+    <!-- 对话 / 工作区 子切换 -->
+    <div class="chat-subnav">
+      <button class="sub-tab active" data-sub="chat">对话</button>
+      <button class="sub-tab" data-sub="work">工作区</button>
+    </div>
+
     <div id="chatList" class="chat-list"></div>
     <div class="chat-input">
       <input id="chatInput" placeholder="和萤宝说点什么…" />
       <button id="chatVoice" class="ghost" title="语音输入">🎤</button>
       <button id="chatSend">发送</button>
+    </div>
+
+    <!-- ==================== 工作区 ==================== -->
+    <div id="workspace" class="workspace" hidden>
+      <aside class="ws-side">
+        <div class="ws-side-head">
+          <span id="wsRootLabel" class="ws-root">工作区</span>
+          <button id="wsUp" class="ghost" title="上一级">↑</button>
+        </div>
+        <div id="wsTree" class="ws-tree"></div>
+      </aside>
+
+      <section class="ws-main">
+        <div class="ws-file-head">
+          <input id="wsPath" readonly placeholder="选择左侧文件…" />
+          <button id="wsSave" class="ghost">保存</button>
+        </div>
+
+        <textarea id="wsEditor" class="ws-editor" spellcheck="false"
+                  placeholder="选择左侧文件后在这里编辑…"></textarea>
+
+        <div class="ws-cmd">
+          <input id="wsCmd" placeholder="运行命令（在工作区根目录执行）" />
+          <button id="wsRunBtn" class="ghost">运行</button>
+        </div>
+
+        <pre id="wsOut" class="ws-out" hidden></pre>
+
+        <div class="ws-ai">
+          <input id="wsAsk" placeholder="让萤宝帮你干活，例如：把 chat.css 的圆角改成 8px 并跑一次构建" />
+          <button id="wsAskBtn">交给萤宝</button>
+        </div>
+
+        <div id="wsLog" class="ws-log"></div>
+      </section>
     </div>
   </section>
 
@@ -218,6 +260,7 @@
 <script src="js/sidenav.js"></script>
 <script src="js/settings.js"></script>
 <script src="js/chat.js"></script>
+<script src="js/workspace.js"></script>
 <script src="js/logs.js"></script>
 <script src="js/main.js"></script>
 </body>

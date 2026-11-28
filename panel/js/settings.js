@@ -26,6 +26,7 @@ const SettingsPanel = (function () {
     "show_hint",
     "wake_word",
     "wake_enabled",
+    "power_mode",
   ];
 
   // ---- 热键捕获 ----
@@ -270,10 +271,64 @@ const SettingsPanel = (function () {
     });
   }
 
+  // ---------------------------------------------------------------- 资源模式
+
+  function renderPower(st) {
+    const box = $id("powerBox");
+    if (!box) return;
+    if (!st || st.error) {
+      box.textContent = "读取失败：" + ((st && st.error) || "未知");
+      return;
+    }
+    const label = { normal: "正常", saver: "省内存", game: "游戏" }[st.mode] || st.mode;
+    box.textContent =
+      "当前：" + label + "（" + st.mode + "）\n" +
+      "TTS：" + (st.tts ? "运行中（约 3.0 GB）" : "已停止") + "\n" +
+      "STT：" + (st.stt ? "运行中（约 2.4 GB）" : "已停止") + "\n" +
+      "预计总占用：" + st.estimate_mb + " MB";
+  }
+
+  function loadPower() {
+    if (!bridge || !bridge.powerStatus) return;
+    bridge.powerStatus(function (raw) {
+      try {
+        const st = JSON.parse(raw);
+        renderPower(st);
+        const sel = $id("power_mode");
+        if (sel && st.mode) sel.value = st.mode;
+      } catch (e) {}
+    });
+  }
+
+  function applyPower() {
+    if (!bridge || !bridge.powerSet) return;
+    const mode = $id("power_mode").value;
+    setStatus("正在切换资源模式（可能要等 20~30 秒）…");
+    $id("powerApply").disabled = true;
+    bridge.powerSet(mode);
+  }
+
+  function onPowerEvent(payload) {
+    const kind = payload && payload.kind;
+    if (kind === "start") {
+      setStatus("正在切换到 " + payload.mode + " …");
+    } else if (kind === "done") {
+      $id("powerApply").disabled = false;
+      const ok = payload.result && payload.result.ok;
+      setStatus(ok ? "模式已切换：" + payload.mode : "切换完成但有失败项", ok ? "ok" : "err");
+      loadPower();
+      reload();
+    } else if (kind === "error") {
+      $id("powerApply").disabled = false;
+      setStatus("切换失败：" + (payload.text || "未知"), "err");
+    }
+  }
+
   function reload() {
     if (!bridge) return;
     setStatus("读取中…");
     loadMemory();
+    loadPower();
     bridge.loadConfig(function (raw) {
       try {
         const state = JSON.parse(raw);
@@ -333,6 +388,10 @@ const SettingsPanel = (function () {
 
     const mc = $id("memoryClean");
     if (mc) mc.addEventListener("click", cleanMemory);
+    const pa = $id("powerApply");
+    if (pa) pa.addEventListener("click", applyPower);
+    const pr = $id("powerRefresh");
+    if (pr) pr.addEventListener("click", loadPower);
     const mz = $id("memoryCompress");
     if (mz) mz.addEventListener("click", compressMemory);
     const mr = $id("memoryRefresh");
@@ -382,5 +441,5 @@ const SettingsPanel = (function () {
     });
   }
 
-  return { bind, reload, collect, onTestResult };
+  return { bind, reload, collect, onTestResult, onPowerEvent };
 })();

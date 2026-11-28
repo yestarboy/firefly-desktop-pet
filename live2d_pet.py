@@ -445,9 +445,10 @@ class WakeListener:
                 str(raw.get("wake_word") or "萤宝").strip(),
                 raw.get("wake_enabled", True) is not False,
                 str(raw.get("voice_mode") or "always"),
+                str(raw.get("power_mode") or "normal"),
             )
         except Exception:
-            return "萤宝", True, "always"
+            return "萤宝", True, "always", "normal"
 
     def _loop(self):
         import requests
@@ -455,9 +456,10 @@ class WakeListener:
         armed = None   # 上一次的监听状态，用于打印"开始/暂停"
 
         while not self._stop.is_set():
-            word, enabled, mode = self._cfg()
+            word, enabled, mode, power = self._cfg()
 
-            now_armed = bool(enabled and mode == "always" and word)
+            # 省内存/游戏模式下暂停收音（STT 可能已经被停掉）
+            now_armed = bool(enabled and mode == "always" and word and power == "normal")
             if now_armed != armed:
                 armed = now_armed
                 print(

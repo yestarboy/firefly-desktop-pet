@@ -108,12 +108,29 @@ def heal_jieba_fast() -> bool:
         return False
 
 
+def _power_mode() -> str:
+    """读资源模式：game/saver 时不要自动拉起语音服务"""
+    try:
+        cfg = json.loads((ROOT / "firefly_config.json").read_text(encoding="utf-8-sig"))
+        m = str(cfg.get("power_mode") or "normal")
+        return m if m in ("normal", "saver", "game") else "normal"
+    except Exception:
+        return "normal"
+
+
 def main() -> int:
     started = []
+    mode = _power_mode()
+    want_tts = mode != "game"
+    want_stt = mode == "normal"
+    if mode != "normal":
+        print(f"资源模式={mode}：跳过部分语音服务")
 
     # 1) GPT-SoVITS TTS
     heal_jieba_fast()      # 缺 dict.txt 会让 TTS 启动即崩，先补
-    if not GPT_PY.exists():
+    if not want_tts:
+        print("游戏模式：不启动 TTS")
+    elif not GPT_PY.exists():
         print("未找到 GPT-SoVITS 运行时，跳过 TTS（桌宠会降级到系统语音）")
     elif port_open(9880):
         print("TTS 已在运行，跳过")
@@ -129,7 +146,9 @@ def main() -> int:
             started.append(info)
 
     # 2) 语音识别
-    if not GPT_PY.exists():
+    if not want_stt:
+        print(f"资源模式={mode}：不启动 STT")
+    elif not GPT_PY.exists():
         print("未找到 GPT-SoVITS 运行时，跳过 STT（语音输入不可用）")
     elif port_open(9881):
         print("STT 已在运行，跳过")

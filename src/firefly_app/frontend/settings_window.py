@@ -38,6 +38,7 @@ EDITABLE_KEYS = [
     "system_prompt", "tts_ref_wav", "tts_speed",
     "stt_mic", "voice_mode", "voice_hotkey",
     "show_hint", "wake_enabled", "wake_word",
+    "power_mode",
 ]
 
 
@@ -110,6 +111,42 @@ class _Bridge(QObject):
             return json.dumps(memory.trim(), ensure_ascii=False)
         except Exception as e:
             return json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False)
+
+    @pyqtSlot(result=str)
+    def powerStatus(self) -> str:
+        try:
+            from firefly_app.backend import power
+
+            return json.dumps(power.status(), ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
+
+    @pyqtSlot(str)
+    def powerSet(self, mode: str):
+        """切换资源模式（后台线程执行，过程用 power_event 广播）"""
+        if getattr(self, "_power_busy", False):
+            return
+        self._power_busy = True
+
+        def _run():
+            from firefly_app.backend import power, ui_bus
+
+            ui_bus.broadcast("power_event", {"kind": "start", "mode": mode})
+            try:
+                r = power.set_mode(mode)
+                ui_bus.broadcast(
+                    "power_event", {"kind": "done", "mode": mode, "result": r}
+                )
+            except Exception as e:
+                ui_bus.broadcast(
+                    "power_event", {"kind": "error", "mode": mode, "text": str(e)}
+                )
+            finally:
+                self._power_busy = False
+
+        import threading
+
+        threading.Thread(target=_run, daemon=True).start()
 
     @pyqtSlot(result=str)
     def memoryCompress(self) -> str:

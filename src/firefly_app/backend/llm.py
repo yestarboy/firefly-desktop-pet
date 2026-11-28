@@ -51,6 +51,8 @@ DEFAULTS = {
     "memory_max_mb": 0,         # 绝对上限（0 = 只用磁盘比例）
     "memory_warn_percent": 85,  # 用到这个百分比就提醒
     "memory_compress_gb": 10,   # 每积累这么多就压缩归档（与上限 85% 取小）
+    # 资源模式：normal=全开 / saver=只留 TTS / game=只留桌宠
+    "power_mode": "normal",
     # 语音输入
     "stt_mic": "",              # 麦克风设备索引；空=系统默认
     "stt_idle_min": 10,         # 识别模型空闲多少分钟后卸载（0=常驻，省内存）

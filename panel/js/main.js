@@ -59,6 +59,11 @@
   window.__pet_on_py_event = function (event, payload) {
     ChatPanel.onEvent(event, payload);
     try {
+      if (event === "power_event" && typeof SettingsPanel !== "undefined" && SettingsPanel.onPowerEvent) {
+        SettingsPanel.onPowerEvent(payload || {});
+      }
+    } catch (e) {}
+    try {
       if (typeof WorkspacePanel !== "undefined") WorkspacePanel.onEvent(event, payload);
     } catch (e) {}
 

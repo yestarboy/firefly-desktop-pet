@@ -207,6 +207,27 @@
       </div>
     </div>
 
+    <div class="card" id="card-power" data-nav="资源模式">
+      <h2>资源模式</h2>
+      <div class="grid">
+        <label class="wide">当前模式
+          <select id="power_mode">
+            <option value="normal">正常（语音全开，约 6 GB）</option>
+            <option value="saver">省内存（停识别，约 3.6 GB）</option>
+            <option value="game">游戏（只留桌宠，约 0.8 GB）</option>
+          </select>
+        </label>
+      </div>
+      <div id="powerBox" class="memory-box">读取中…</div>
+      <div class="row">
+        <button id="powerApply" class="ghost">应用模式</button>
+        <button id="powerRefresh" class="ghost">刷新状态</button>
+      </div>
+      <p class="hint">
+        省内存 / 游戏模式会停掉语音服务回收内存，唤醒词同时暂停；切回正常需等 20~30 秒重新加载。
+      </p>
+    </div>
+
     <div class="card" id="card-status" data-nav="运行状态">
       <h2>运行状态</h2>
       <pre id="stateBox">—</pre>
